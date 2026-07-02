@@ -1,13 +1,12 @@
 //! Test utilities for verifying macro expansions against expected Solidity output.
 
-use std::collections::HashSet;
-use std::ops::ControlFlow;
-use std::path::Path;
+use std::{collections::HashSet, ops::ControlFlow, path::Path};
 
-use foundry_compilers::artifacts::{SolcLanguage, Source, Sources};
-use foundry_compilers::{ProjectPathsConfig, SourceParser};
-use solar::parse::interface::Session;
-use solar::sema::Compiler;
+use foundry_compilers::{
+    ProjectPathsConfig, SourceParser,
+    artifacts::{SolcLanguage, Source, Sources},
+};
+use solar::{parse::interface::Session, sema::Compiler};
 
 use crate::{Macro, PreprocessingData};
 
@@ -80,10 +79,7 @@ pub fn test_macros(
             }
             std::fs::write(&snapshot_path, content)?;
         }
-        let paths: Vec<_> = failures
-            .iter()
-            .map(|(p, _)| p.display().to_string())
-            .collect();
+        let paths: Vec<_> = failures.iter().map(|(p, _)| p.display().to_string()).collect();
         eyre::bail!(
             "macro expansion mismatch in: {}\nActual output written to '{}' — copy to '{}' if correct.",
             paths.join(", "),
@@ -149,10 +145,8 @@ pub fn expand_macros_with_sources(
         .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
             let mut pcx = compiler.parse();
             for (path, src) in sources.iter() {
-                if let Ok(src_file) = compiler
-                    .sess()
-                    .source_map()
-                    .new_source_file(path.clone(), src.content.as_str())
+                if let Ok(src_file) =
+                    compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
                 {
                     pcx.add_file(src_file);
                 }

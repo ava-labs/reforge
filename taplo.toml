@@ -1,0 +1,1 @@
+exclude = ["foundry/**", "sample_proj/**"]

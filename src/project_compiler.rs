@@ -1,12 +1,15 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::time::Instant;
+use std::{collections::BTreeMap, path::PathBuf, time::Instant};
 
-use foundry_common::compile::{ContractInfo, SizeReport, with_compilation_reporter};
-use foundry_common::{TestFunctionExt, sh_println, shell};
-use foundry_compilers::artifacts::{BytecodeObject, Contract, Source};
-use foundry_compilers::project::Preprocessor;
-use foundry_compilers::{Artifact, Compiler, Project, ProjectCompileOutput};
+use foundry_common::{
+    TestFunctionExt,
+    compile::{ContractInfo, SizeReport, with_compilation_reporter},
+    sh_println, shell,
+};
+use foundry_compilers::{
+    Artifact, Compiler, Project, ProjectCompileOutput,
+    artifacts::{BytecodeObject, Contract, Source},
+    project::Preprocessor,
+};
 
 /// https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
@@ -138,19 +141,14 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report = SizeReport {
-                contracts: BTreeMap::new(),
-            };
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
                 // filter out forge-std specific contracts
                 !id.source.to_string_lossy().contains("/forge-std/src/")
             }) {
-                artifacts
-                    .entry(id.name.clone())
-                    .or_default()
-                    .push((id.source.clone(), artifact));
+                artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
             }
 
             for (name, artifact_list) in artifacts {
@@ -173,9 +171,7 @@ impl ProjectCompiler {
                         format!(
                             "{} ({})",
                             name,
-                            path.strip_prefix(&self.project_root)
-                                .unwrap_or(path)
-                                .display()
+                            path.strip_prefix(&self.project_root).unwrap_or(path).display()
                         )
                     } else {
                         name.clone()
@@ -183,11 +179,7 @@ impl ProjectCompiler {
 
                     size_report.contracts.insert(
                         unique_name,
-                        ContractInfo {
-                            runtime_size,
-                            init_size,
-                            is_dev_contract,
-                        },
+                        ContractInfo { runtime_size, init_size, is_dev_contract },
                     );
                 }
             }

@@ -1,7 +1,8 @@
-use crate::project_compiler::ProjectCompiler;
 use forge::cmd::{install, test::TestArgs};
 use foundry_cli::utils::LoadConfig;
 use foundry_common::shell;
+
+use crate::project_compiler::ProjectCompiler;
 
 pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
     let silent = test_args.junit || shell::is_json();
@@ -14,10 +15,7 @@ pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::R
     let project = config.project()?;
     let filter = test_args.filter(&config)?;
 
-    let files = test_args
-        .get_sources_to_compile(&config, &filter)?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let files = test_args.get_sources_to_compile(&config, &filter)?.into_iter().collect::<Vec<_>>();
 
     let compiler = ProjectCompiler {
         project_root: project.root().to_path_buf(),
@@ -30,16 +28,8 @@ pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::R
 
     let output = compiler.compile(&project, macros)?;
 
-    let outcome = test_args
-        .run_tests(
-            &project.paths.root,
-            config,
-            evm_opts,
-            &output,
-            &filter,
-            false,
-        )
-        .await?;
+    let outcome =
+        test_args.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await?;
 
     outcome.ensure_ok(silent)
 }

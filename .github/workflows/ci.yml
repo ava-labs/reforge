@@ -34,7 +34,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Run example test suite
-        run: cargo run --example macros -- test --root sample_proj
+        run: make test
 
   clippy:
     name: Clippy
@@ -61,7 +61,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: make clippy
 
   fmt:
     name: Formatting
@@ -69,11 +69,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Read nightly toolchain version
+        id: nightly
+        run: echo "version=$(cat nightly-toolchain)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.91.0"
+          toolchain: ${{ steps.nightly.outputs.version }}
           components: rustfmt
 
+      - name: Install taplo
+        run: cargo install taplo-cli --locked
+
+      - name: Install cargo-sort
+        run: cargo install cargo-sort --locked
+
       - name: Check formatting
-        run: cargo fmt --check
+        run: make fmt-check

@@ -5,8 +5,7 @@ use std::path::Path;
 use foundry_compilers::artifacts::Sources;
 use glob::MatchOptions;
 
-use crate::Macro;
-use crate::testing::expand_macros;
+use crate::{Macro, testing::expand_macros};
 
 /// Formats a Solidity source string using the default `forge fmt` config.
 /// Falls back to the original string if formatting fails.
@@ -43,10 +42,7 @@ pub fn display_sources(root: &Path, glob: &str, sources: &Sources) -> eyre::Resu
             pattern
                 .matches_path_with(
                     relative,
-                    MatchOptions {
-                        require_literal_separator: true,
-                        ..Default::default()
-                    },
+                    MatchOptions { require_literal_separator: true, ..Default::default() },
                 )
                 .then_some((relative.to_path_buf(), src.content.clone()))
         })

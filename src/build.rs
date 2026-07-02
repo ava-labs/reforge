@@ -1,23 +1,23 @@
 use std::path::PathBuf;
 
 use eyre::Context;
-use forge::cmd::build::BuildArgs;
-use forge::cmd::install;
-use forge_lint::linter::Linter;
-use forge_lint::sol::SolidityLinter;
-use foundry_cli::opts::{configure_pcx_from_solc, get_solar_sources_from_compile_output};
-use foundry_cli::utils::{LoadConfig, cache_local_signatures};
+use forge::cmd::{build::BuildArgs, install};
+use forge_lint::{linter::Linter, sol::SolidityLinter};
+use foundry_cli::{
+    opts::{configure_pcx_from_solc, get_solar_sources_from_compile_output},
+    utils::{LoadConfig, cache_local_signatures},
+};
 use foundry_common::{sh_println, sh_warn, shell};
+use foundry_compilers::{
+    CompilationError, FileFilter, Language, Project, ProjectCompileOutput, artifacts::SolcLanguage,
+    multi::MultiCompilerLanguage, utils::source_files_iter,
+};
+use foundry_config::{Config, SkipBuildFilters, filter::expand_globs};
 
-use foundry_compilers::artifacts::SolcLanguage;
-use foundry_compilers::multi::MultiCompilerLanguage;
-use foundry_compilers::utils::source_files_iter;
-use foundry_compilers::{CompilationError, FileFilter, Language, Project, ProjectCompileOutput};
-use foundry_config::filter::expand_globs;
-use foundry_config::{Config, SkipBuildFilters};
-
-use crate::lockfile::{check_foundry_lock_consistency, check_soldeer_lock_consistency};
-use crate::project_compiler::ProjectCompiler;
+use crate::{
+    lockfile::{check_foundry_lock_consistency, check_soldeer_lock_consistency},
+    project_compiler::ProjectCompiler,
+};
 
 /// Builds the project. First it does macro expansion as a preprocessing step
 /// before passing the modified sources to the solc compiler. Linting is performed
@@ -42,10 +42,7 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
         for path in paths {
             let joined = project.root().join(path);
             let path = if joined.exists() { &joined } else { path };
-            files.extend(source_files_iter(
-                path,
-                MultiCompilerLanguage::FILE_EXTENSIONS,
-            ));
+            files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
         }
         if files.is_empty() {
             eyre::bail!("No source files found in specified build paths.")
@@ -74,14 +71,8 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
 
     // Only run the `SolidityLinter` if lint on build and no compilation errors.
     if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-        lint(
-            &project,
-            &config,
-            build_args.paths.as_deref(),
-            &mut output,
-            preprocessed_sources,
-        )
-        .wrap_err("Lint Failed")?;
+        lint(&project, &config, build_args.paths.as_deref(), &mut output, preprocessed_sources)
+            .wrap_err("Lint Failed")?;
     }
     Ok(())
 }
@@ -144,11 +135,7 @@ fn lint(
             let canonicalized: std::collections::BTreeMap<_, _> = preprocessed
                 .into_iter()
                 .filter_map(|(p, s)| {
-                    let abs = if p.is_absolute() {
-                        p
-                    } else {
-                        project.root().join(&p)
-                    };
+                    let abs = if p.is_absolute() { p } else { project.root().join(&p) };
                     std::fs::canonicalize(&abs).ok().map(|cp| (cp, s))
                 })
                 .collect::<std::collections::BTreeMap<_, _>>();
@@ -168,9 +155,7 @@ fn lint(
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
         // compiler, we should reuse the parser from the project output.
         let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder()
-                .with_stderr_emitter()
-                .build(),
+            solar::interface::Session::builder().with_stderr_emitter().build(),
         );
 
         // Load the solar-compatible sources to the pcx before linting

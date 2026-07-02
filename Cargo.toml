@@ -7,20 +7,20 @@ rust-version = "1.91.0"
 license = "MIT"
 
 [dependencies]
-clap = { version = "4.6.0" , features = ["derive"]}
+clap = { version = "4.6.0", features = ["derive"] }
 eyre = "0.6.12"
-foundry-common = { path = "foundry/crates/common"}
 forge = { path = "foundry/crates/forge" }
-foundry-cli = { path = "foundry/crates/cli" }
-foundry-compilers = { version = "0.19.14", default-features = false }
-foundry-config = { path = "foundry/crates/config" }
 forge-fmt = { path = "foundry/crates/fmt" }
 forge-lint = { path = "foundry/crates/lint" }
+foundry-cli = { path = "foundry/crates/cli" }
+foundry-common = { path = "foundry/crates/common" }
+foundry-compilers = { version = "0.19.14", default-features = false }
+foundry-config = { path = "foundry/crates/config" }
 glob = "0.3"
 regex = "1.12.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-solar = {package = "solar-compiler", version = "=0.1.8", default-features = false }
+solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 soldeer-core = { version = "=0.10.0", features = ["serde"] }
 tracing = "0.1"
 

@@ -29,7 +29,8 @@ impl<'a> Lockfile<'a> {
     ///
     /// `project_root` is the absolute path to the project root.
     ///
-    /// You will need to call [`forge::Lockfile::read`] or [`forge::Lockfile::sync`] to load the lockfile.
+    /// You will need to call [`forge::Lockfile::read`] or [`forge::Lockfile::sync`] to load the
+    /// lockfile.
     pub fn new(project_root: &Path) -> Self {
         Self {
             deps: HashMap::default(),
@@ -49,10 +50,7 @@ impl<'a> Lockfile<'a> {
     /// Throws an error if the lockfile does not exist.
     pub fn read(&mut self) -> eyre::Result<()> {
         if !self.lockfile_path.exists() {
-            return Err(eyre::eyre!(
-                "Lockfile not found at {}",
-                self.lockfile_path.display()
-            ));
+            return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
         }
 
         let lockfile_str = foundry_common::fs::read_to_string(&self.lockfile_path)?;
@@ -86,16 +84,8 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
             Ok(status) => {
                 use soldeer_core::install::DependencyStatus;
                 // Check if status indicates a problem
-                if matches!(
-                    status,
-                    DependencyStatus::Missing | DependencyStatus::FailedIntegrity
-                ) {
-                    sh_warn!(
-                        "Dependency '{}' integrity check failed: {:?}",
-                        dep_name,
-                        status
-                    )
-                    .ok();
+                if matches!(status, DependencyStatus::Missing | DependencyStatus::FailedIntegrity) {
+                    sh_warn!("Dependency '{}' integrity check failed: {:?}", dep_name, status).ok();
                 }
             }
             Err(e) => {
@@ -128,22 +118,14 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
         let full_path = config.root.join(dep_path);
 
         if !full_path.exists() {
-            sh_warn!(
-                "Dependency '{}' not found at expected path",
-                dep_path.display()
-            )
-            .ok();
+            sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
             continue;
         }
 
         let actual_rev = match git.get_rev("HEAD", &full_path) {
             Ok(rev) => rev,
             Err(_) => {
-                sh_warn!(
-                    "Failed to get git revision for dependency '{}'",
-                    dep_path.display()
-                )
-                .ok();
+                sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display()).ok();
                 continue;
             }
         };

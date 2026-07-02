@@ -5,24 +5,32 @@ mod project_compiler;
 mod test;
 pub mod testing;
 
-use std::collections::HashSet;
-use std::fmt::{Debug, Formatter};
-use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    fmt::{Debug, Formatter},
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use clap::Parser;
-use forge::args::setup;
-use forge::cmd::build::BuildArgs;
-use forge::opts::{Forge, ForgeSubcommand};
+use forge::{
+    args::setup,
+    cmd::build::BuildArgs,
+    opts::{Forge, ForgeSubcommand},
+};
 use foundry_cli::utils::LoadConfig;
-use foundry_common::errors::convert_solar_errors;
-use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
-use foundry_compilers::artifacts::{SolcLanguage, Sources};
-use foundry_compilers::multi::{MultiCompiler, MultiCompilerInput};
-use foundry_compilers::project::Preprocessor;
-use foundry_compilers::solc::SolcCompiler;
-use foundry_compilers::{Compiler, ProjectPathsConfig, SourceParser};
+use foundry_common::{
+    errors::convert_solar_errors,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
+use foundry_compilers::{
+    Compiler, ProjectPathsConfig, SourceParser,
+    artifacts::{SolcLanguage, Sources},
+    multi::{MultiCompiler, MultiCompilerInput},
+    project::Preprocessor,
+    solc::SolcCompiler,
+};
 use solar::sema::Gcx;
 
 #[derive(Parser)]
@@ -129,8 +137,7 @@ impl PreprocessingData<'_> {
         content.replace_range(adjusted_start..adjusted_end, text.as_ref());
         let delta =
             text.as_ref().len() as isize - (original_range.end - original_range.start) as isize;
-        self.offset_adjustments
-            .push((path.to_path_buf(), original_range.start, delta));
+        self.offset_adjustments.push((path.to_path_buf(), original_range.start, delta));
     }
 }
 
@@ -143,9 +150,7 @@ pub struct MacroRules {
 
 impl Debug for MacroRules {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MacroRules")
-            .field("rules", &"<functions>")
-            .finish()
+        f.debug_struct("MacroRules").field("rules", &"<functions>").finish()
     }
 }
 
@@ -294,10 +299,7 @@ pub fn get_comment(
     let original_offset = (span.lo().0 - source.file.start_pos.0) as usize;
     let adjusted = data.adjusted_offset(path, original_offset);
     // Walk back to the start of the line
-    let line_start = source_text[..adjusted]
-        .rfind('\n')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let line_start = source_text[..adjusted].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let before = &source_text[..line_start];
     let mut comment_block = String::new();
     let mut in_block_comment = false;
@@ -325,9 +327,5 @@ pub fn get_comment(
         }
     }
     let trimmed = comment_block.trim_start();
-    if trimmed.starts_with("//") || trimmed.starts_with("/*") {
-        Some(comment_block)
-    } else {
-        None
-    }
+    if trimmed.starts_with("//") || trimmed.starts_with("/*") { Some(comment_block) } else { None }
 }

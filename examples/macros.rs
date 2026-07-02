@@ -1,9 +1,8 @@
+use std::{collections::HashMap, sync::Arc};
+
 use foundry_compilers::error::SolcError;
 use reforge::{MacroRules, PreprocessingData, get_comment};
-use solar::sema::Gcx;
-use solar::sema::hir::ContractKind;
-use std::collections::HashMap;
-use std::sync::Arc;
+use solar::sema::{Gcx, hir::ContractKind};
 
 fn main() -> eyre::Result<()> {
     let mut macros = MacroRules::default();
@@ -56,10 +55,7 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
             "\n    function print{name}() public pure returns (string memory) {{ return \"{name}\"; }}\n"
         );
         tracing::debug!("Injecting function for struct {name} into {library_name}");
-        insertions
-            .entry(path.to_path_buf())
-            .or_default()
-            .push((close_brace_offset, func));
+        insertions.entry(path.to_path_buf()).or_default().push((close_brace_offset, func));
     }
 
     // In this example macro, we handle the offset adjustments manually. This is more efficient
@@ -68,7 +64,7 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
     for (path, mut inserts) in insertions {
         let src = data.input.get_mut(&path).unwrap();
         // Apply in reverse offset order so earlier positions aren't shifted.
-        inserts.sort_by(|a, b| b.0.cmp(&a.0));
+        inserts.sort_by_key(|b| std::cmp::Reverse(b.0));
         let content = Arc::make_mut(&mut src.content);
         for (offset, text) in &inserts {
             content.insert_str(*offset, text.as_str());
@@ -116,12 +112,10 @@ fn get_id_or_revert(
         } else {
             continue;
         };
-        let has_id_field = struct_def.fields.iter().any(|&var_id| {
-            ctx.hir
-                .variable(var_id)
-                .name
-                .is_some_and(|n| n.name.as_str() == "ID")
-        });
+        let has_id_field = struct_def
+            .fields
+            .iter()
+            .any(|&var_id| ctx.hir.variable(var_id).name.is_some_and(|n| n.name.as_str() == "ID"));
 
         // Find the pre-existing contract named `contract_name` in the same source file.
         let Some(library) = ctx
@@ -145,10 +139,7 @@ fn get_id_or_revert(
                 "\n    function getId{name}({name} memory) public pure returns (uint32) {{ revert(\"{name} has no field ID\"); }}\n",
             )
         };
-        insertions
-            .entry(path.to_path_buf())
-            .or_default()
-            .push((close_brace_offset, func));
+        insertions.entry(path.to_path_buf()).or_default().push((close_brace_offset, func));
     }
 
     // In this example, we use the provided helper methods to insert the text and handle the
@@ -168,11 +159,7 @@ fn make_libraries_contracts(
     ctx: &Gcx,
     data: &mut PreprocessingData<'_>,
 ) -> foundry_compilers::error::Result<()> {
-    for lib in ctx
-        .hir
-        .contracts()
-        .filter(|c| c.kind == ContractKind::Library)
-    {
+    for lib in ctx.hir.contracts().filter(|c| c.kind == ContractKind::Library) {
         let Some(source) = ctx.sources.get(lib.source) else {
             continue;
         };
@@ -194,8 +181,7 @@ fn make_libraries_contracts(
             // "contract" is 1 byte longer than "library"; record the shift so subsequent
             // macro rules can adjust HIR-derived offsets within this file.
             let delta = "contract".len() as isize - "library".len() as isize;
-            data.offset_adjustments
-                .push((path.to_path_buf(), lib_offset, delta));
+            data.offset_adjustments.push((path.to_path_buf(), lib_offset, delta));
         }
     }
     Ok(())
