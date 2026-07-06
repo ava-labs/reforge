@@ -1,0 +1,518 @@
+//! `coverage` subcommand with macro preprocessing.
+//!
+//! This is a reimplementation of Foundry's `forge coverage` command
+//! (`foundry/crates/forge/src/cmd/coverage.rs`). The analysis, anchoring, test
+//! execution and reporting stages are functionally identical to Foundry's; the
+//! only substantive difference is the `build` step, which compiles the project
+//! through reforge's macro-aware [`crate::project_compiler::ProjectCompiler`] so
+//! that macro expansion is applied before `solc` runs.
+//!
+//! Foundry's `CoverageArgs` keeps all of its fields and helper methods private,
+//! so (unlike `build`/`test`) we cannot drive it via public APIs. Instead we
+//! mirror the CLI struct here and copy the private post-compile logic verbatim.
+
+use std::path::{Path, PathBuf};
+
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
+use clap::{Parser, ValueHint};
+use eyre::Result;
+use forge::{
+    cmd::{coverage::CoverageReportKind, install, test::TestArgs},
+    coverage::{
+        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+        DebugReporter, ItemAnchor, LcovReporter,
+        analysis::{SourceAnalysis, SourceFiles},
+        anchors::find_anchors,
+    },
+};
+use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
+use foundry_common::{errors::convert_solar_errors, sh_println, sh_warn};
+use foundry_compilers::{
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, SourceParser,
+    VYPER_EXTENSIONS,
+    artifacts::{
+        CompactBytecode, CompactDeployedBytecode, SolcLanguage, Sources, sourcemap::SourceMap,
+    },
+    resolver::parse::SolParser,
+};
+use foundry_config::Config;
+use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
+use rayon::prelude::*;
+use semver::{Version, VersionReq};
+
+use crate::project_compiler::ProjectCompiler;
+
+// Loads project's figment and merges the build cli arguments into it.
+foundry_config::impl_figment_convert!(CoverageArgs, test);
+
+/// CLI arguments for `forge coverage`.
+///
+/// Mirrors [`forge::cmd::coverage::CoverageArgs`]; the attributes must be kept in
+/// sync so the flags parse identically.
+#[derive(Parser)]
+pub struct CoverageArgs {
+    /// The report type to use for coverage.
+    ///
+    /// This flag can be used multiple times.
+    #[arg(long, value_enum, default_value = "summary")]
+    report: Vec<CoverageReportKind>,
+
+    /// The version of the LCOV "tracefile" format to use.
+    ///
+    /// Format: `MAJOR[.MINOR]`.
+    #[arg(long, default_value = "1", value_parser = parse_lcov_version)]
+    lcov_version: Version,
+
+    /// Enable viaIR with minimum optimization
+    ///
+    /// This can fix most of the "stack too deep" errors while resulting a
+    /// relatively accurate source map.
+    #[arg(long)]
+    ir_minimum: bool,
+
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[arg(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
+
+    /// Whether to include libraries in the coverage report.
+    #[arg(long)]
+    include_libs: bool,
+
+    /// Whether to exclude tests from the coverage report.
+    #[arg(long)]
+    exclude_tests: bool,
+
+    /// The coverage reporters to use. Constructed from the other fields.
+    #[arg(skip)]
+    reporters: Vec<Box<dyn CoverageReporter>>,
+
+    #[command(flatten)]
+    test: TestArgs,
+}
+
+impl CoverageArgs {
+    /// Runs the coverage pipeline, applying macro expansion during compilation.
+    pub async fn run(mut self, macros: crate::MacroRules) -> Result<()> {
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        // install missing dependencies
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config()?;
+        }
+
+        // Set fuzz seed so coverage reports are deterministic
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+
+        // Keep a handle to the sources produced by macro expansion so the source
+        // analysis can be run against the expanded code rather than the originals.
+        let preprocessed_sources = macros.preprocessed_sources.clone();
+        let (paths, mut output) = {
+            let (project, output) = self.build(&config, macros)?;
+            (project.paths, output)
+        };
+        let preprocessed_sources = preprocessed_sources.lock().unwrap().take();
+
+        self.populate_reporters(&paths.root);
+
+        sh_println!("Analysing contracts...")?;
+        let report = self.prepare(&paths, &mut output, preprocessed_sources)?;
+
+        sh_println!("Running tests...")?;
+        self.collect(&paths.root, &output, report, config, evm_opts).await
+    }
+
+    fn populate_reporters(&mut self, root: &Path) {
+        self.reporters = self
+            .report
+            .iter()
+            .map(|report_kind| match report_kind {
+                CoverageReportKind::Summary => {
+                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                }
+                CoverageReportKind::Lcov => {
+                    let path =
+                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                }
+                CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
+                    root.to_path_buf(),
+                    root.join("bytecode-coverage"),
+                )),
+                CoverageReportKind::Debug => Box::new(DebugReporter),
+            })
+            .collect::<Vec<_>>();
+    }
+
+    /// Builds the project.
+    ///
+    /// This is the only part of the pipeline that differs from Foundry: it
+    /// compiles through reforge's macro-aware [`ProjectCompiler`] instead of
+    /// `foundry_common::compile::ProjectCompiler`.
+    fn build(
+        &self,
+        config: &Config,
+        macros: crate::MacroRules,
+    ) -> Result<(Project, ProjectCompileOutput)> {
+        let mut project = config.ephemeral_project()?;
+
+        if self.ir_minimum {
+            sh_warn!(
+                "`--ir-minimum` enables `viaIR` with minimum optimization, \
+                 which can result in inaccurate source mappings.\n\
+                 Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
+                 Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
+                 See more: https://github.com/foundry-rs/foundry/issues/3357"
+            )?;
+        } else {
+            sh_warn!(
+                "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
+                 If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
+                 enables `viaIR` with minimum optimization resolving most of the errors"
+            )?;
+        }
+
+        config.disable_optimizations(&mut project, self.ir_minimum);
+
+        let compiler = ProjectCompiler {
+            project_root: project.root().to_path_buf(),
+            print_names: false,
+            print_sizes: false,
+            bail: true,
+            ignore_eip_3860: false,
+            files: vec![],
+        };
+
+        let output =
+            compiler.compile(&project, macros)?.with_stripped_file_prefixes(project.root());
+
+        Ok((project, output))
+    }
+
+    /// Builds the coverage report.
+    fn prepare(
+        &self,
+        project_paths: &ProjectPathsConfig,
+        output: &mut ProjectCompileOutput,
+        preprocessed_sources: Option<Sources>,
+    ) -> Result<CoverageReport> {
+        let mut report = CoverageReport::default();
+
+        // The compiler kept in `output` parsed the original, on-disk sources during graph
+        // resolution (before macro preprocessing), so any macro-injected symbols are unresolved.
+        // Rebuild it from the expanded sources so HIR lowering and source analysis operate on the
+        // same code that `solc` actually compiled.
+        if let Some(preprocessed) = preprocessed_sources {
+            let sol_paths = project_paths.clone().with_language::<SolcLanguage>();
+            let expanded = build_expanded_compiler(&preprocessed, &project_paths.root, &sol_paths);
+            *output.parser_mut().solc_mut().compiler_mut() = expanded;
+        }
+
+        output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+                let _ = compiler.lower_asts();
+            }
+            convert_solar_errors(compiler.dcx())
+        })?;
+        let output = &*output;
+
+        // Collect source files.
+        let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
+        for (path, source_file, version) in output.output().sources.sources_with_version() {
+            // Filter out vyper sources.
+            if path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+            {
+                continue;
+            }
+
+            report.add_source(version.clone(), source_file.id as usize, path.clone());
+
+            // Filter out libs dependencies and tests.
+            if (!self.include_libs && project_paths.has_library_ancestor(path))
+                || (self.exclude_tests && project_paths.is_test(path))
+            {
+                continue;
+            }
+
+            let path = project_paths.root.join(path);
+            versioned_sources
+                .entry(version.clone())
+                .or_default()
+                .sources
+                .insert(source_file.id, path);
+        }
+
+        // Get source maps and bytecodes.
+        let artifacts: Vec<ArtifactData> = output
+            .artifact_ids()
+            .par_bridge() // This parses source maps, so we want to run it in parallel.
+            .filter_map(|(id, artifact)| {
+                let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
+                ArtifactData::new(&id, source_id, artifact)
+            })
+            .collect();
+
+        // Add coverage items.
+        for (version, sources) in &versioned_sources {
+            let source_analysis = SourceAnalysis::new(sources, output)?;
+            let anchors = artifacts
+                .par_iter()
+                .filter(|artifact| artifact.contract_id.version == *version)
+                .map(|artifact| {
+                    let creation_code_anchors = artifact.creation.find_anchors(&source_analysis);
+                    let deployed_code_anchors = artifact.deployed.find_anchors(&source_analysis);
+                    (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
+                })
+                .collect_vec_list();
+            report.add_anchors(anchors.into_iter().flatten());
+            report.add_analysis(version.clone(), source_analysis);
+        }
+
+        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+            report.add_source_maps(artifacts.into_iter().map(|artifact| {
+                (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
+            }));
+        }
+
+        Ok(report)
+    }
+
+    /// Runs tests, collects coverage data and generates the final report.
+    async fn collect(
+        mut self,
+        project_root: &Path,
+        output: &ProjectCompileOutput,
+        mut report: CoverageReport,
+        config: Config,
+        evm_opts: EvmOpts,
+    ) -> Result<()> {
+        let filter = self.test.filter(&config)?;
+        let outcome =
+            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
+
+        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+
+        // Add hit data to the coverage report
+        let data = outcome.results.values().flat_map(|suite| {
+            let mut hits = Vec::new();
+            for result in suite.test_results.values() {
+                let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
+                for map in hit_maps.0.values() {
+                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
+                        hits.push((id, map, true));
+                    } else if let Some((id, _)) =
+                        known_contracts.find_by_creation_code(map.bytecode())
+                    {
+                        hits.push((id, map, false));
+                    }
+                }
+            }
+            hits
+        });
+
+        for (artifact_id, map, is_deployed_code) in data {
+            if let Some(source_id) =
+                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+            {
+                report.add_hit_map(
+                    &ContractId {
+                        version: artifact_id.version.clone(),
+                        source_id,
+                        contract_name: artifact_id.name.as_str().into(),
+                    },
+                    map,
+                    is_deployed_code,
+                )?;
+            }
+        }
+
+        // Filter out ignored sources from the report.
+        if let Some(not_re) = &filter.args().coverage_pattern_inverse {
+            let file_root = filter.paths().root.as_path();
+            report.retain_sources(|path: &Path| {
+                let path = path.strip_prefix(file_root).unwrap_or(path);
+                !not_re.is_match(&path.to_string_lossy())
+            });
+        }
+
+        // Output final reports.
+        self.report(&report)?;
+
+        // Check for test failures after generating coverage report.
+        // This ensures coverage data is written even when tests fail.
+        outcome.ensure_ok(false)?;
+
+        Ok(())
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> Result<()> {
+        for reporter in &mut self.reporters {
+            reporter.report(report)?;
+        }
+        Ok(())
+    }
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
+    let link_references = obj.link_references.clone();
+    for (file, libraries) in link_references {
+        for library in libraries.keys() {
+            obj.link(&file, library, Address::ZERO);
+        }
+    }
+
+    obj.object.resolve();
+    obj.object.into_bytes()
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_deployed_bytecode(obj: CompactDeployedBytecode) -> Option<Bytes> {
+    obj.bytecode.and_then(dummy_link_bytecode)
+}
+
+struct ArtifactData {
+    contract_id: ContractId,
+    creation: BytecodeData,
+    deployed: BytecodeData,
+}
+
+impl ArtifactData {
+    fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+        Some(Self {
+            contract_id: ContractId {
+                version: id.version.clone(),
+                source_id,
+                contract_name: id.name.as_str().into(),
+            },
+            creation: BytecodeData::new(
+                artifact.get_source_map()?.ok()?,
+                artifact
+                    .get_bytecode()
+                    .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
+            ),
+            deployed: BytecodeData::new(
+                artifact.get_source_map_deployed()?.ok()?,
+                artifact
+                    .get_deployed_bytecode()
+                    .and_then(|bytecode| dummy_link_deployed_bytecode(bytecode.into_owned()))?,
+            ),
+        })
+    }
+}
+
+struct BytecodeData {
+    source_map: SourceMap,
+    bytecode: Bytes,
+    /// The instruction counter to program counter mapping.
+    ///
+    /// The source maps are indexed by *instruction counters*, which are the indexes of
+    /// instructions in the bytecode *minus any push bytes*.
+    ///
+    /// Since our line coverage inspector collects hit data using program counters, the anchors
+    /// also need to be based on program counters.
+    ic_pc_map: IcPcMap,
+}
+
+impl BytecodeData {
+    fn new(source_map: SourceMap, bytecode: Bytes) -> Self {
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        Self { source_map, bytecode, ic_pc_map }
+    }
+
+    fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
+        find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
+    }
+}
+
+/// Builds a Solar compiler with fully lowered HIR from the macro-expanded sources.
+///
+/// Files are keyed by absolute path (`root`-joined) so that the source-analysis lookups in
+/// [`SourceAnalysis::new`], which use `project_paths.root.join(path)`, resolve correctly. This
+/// mirrors reforge's [`crate::MacroRules`] preprocessing step, minus the macro rules.
+fn build_expanded_compiler(
+    preprocessed: &Sources,
+    root: &Path,
+    sol_paths: &ProjectPathsConfig<SolcLanguage>,
+) -> solar::sema::Compiler {
+    let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
+    compiler.enter_mut(|compiler| {
+        let mut pcx = compiler.parse();
+        for (path, source) in preprocessed.iter() {
+            let abs = if path.is_absolute() { path.clone() } else { root.join(path) };
+            if let Ok(src_file) =
+                compiler.sess().source_map().new_source_file(abs, source.content.as_str())
+            {
+                pcx.add_file(src_file);
+            }
+        }
+        pcx.parse();
+        let _ = compiler.lower_asts();
+    });
+    compiler
+}
+
+fn parse_lcov_version(s: &str) -> Result<Version, String> {
+    let vr = VersionReq::parse(&format!("={s}")).map_err(|e| e.to_string())?;
+    let [c] = &vr.comparators[..] else {
+        return Err("invalid version".to_string());
+    };
+    if c.op != semver::Op::Exact {
+        return Err("invalid version".to_string());
+    }
+    if !c.pre.is_empty() {
+        return Err("pre-releases are not supported".to_string());
+    }
+    Ok(Version::new(c.major, c.minor.unwrap_or(0), c.patch.unwrap_or(0)))
+}
+
+/// Mirror of reforge's top-level CLI, restricted to the `coverage` subcommand.
+///
+/// Foundry's `CoverageArgs` does not expose its fields, so once the main parser
+/// has identified a `coverage` invocation we re-parse `std::env` into reforge's
+/// own [`CoverageArgs`]. The flag layout must mirror [`crate::Reforge`].
+#[derive(Parser)]
+#[command(name = "reforge")]
+struct CoverageCli {
+    #[arg(long)]
+    #[allow(dead_code)]
+    disable_macros: bool,
+    #[arg(long, value_name = "GLOB")]
+    #[allow(dead_code)]
+    display: Option<String>,
+    #[command(flatten)]
+    #[allow(dead_code)]
+    global: foundry_cli::opts::GlobalArgs,
+    #[command(subcommand)]
+    cmd: CoverageSub,
+}
+
+#[derive(clap::Subcommand)]
+enum CoverageSub {
+    Coverage(CoverageArgs),
+}
+
+/// Re-parses the process arguments into reforge's [`CoverageArgs`].
+///
+/// Must only be called once the main parser has confirmed the invocation is a
+/// `coverage` subcommand.
+pub fn parse_from_env() -> CoverageArgs {
+    match CoverageCli::parse().cmd {
+        CoverageSub::Coverage(args) => args,
+    }
+}

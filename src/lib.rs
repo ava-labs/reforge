@@ -2,6 +2,7 @@
 // See the file LICENSE for licensing terms.
 
 mod build;
+mod coverage;
 pub mod display;
 mod lockfile;
 mod project_compiler;
@@ -193,6 +194,11 @@ impl MacroRules {
                 // process arguments into reforge's own mirror of the struct.
                 let snapshot_args = snapshot::parse_from_env();
                 return args.forge.global.block_on(snapshot_args.run(self));
+            } else if matches!(args.forge.cmd, ForgeSubcommand::Coverage(_)) {
+                // Foundry's `CoverageArgs` hides its fields, so we re-parse the
+                // process arguments into reforge's own mirror of the struct.
+                let coverage_args = coverage::parse_from_env();
+                return args.forge.global.block_on(coverage_args.run(self));
             }
         }
         forge::args::run_command(args.forge)
