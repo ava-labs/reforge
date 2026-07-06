@@ -39,6 +39,9 @@ jobs:
       - name: Run example test suite
         run: make test
 
+      - name: Run example coverage smoke test
+        run: make coverage
+
       - name: Run example snapshot smoke test
         run: make snapshot
 
