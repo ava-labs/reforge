@@ -6810,7 +6810,9 @@ dependencies = [
 name = "reforge"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "clap",
+ "comfy-table",
  "eyre",
  "forge",
  "forge-fmt",
@@ -6826,6 +6828,7 @@ dependencies = [
  "solar-compiler",
  "soldeer-core",
  "tracing",
+ "yansi",
 ]
 
 [[package]]

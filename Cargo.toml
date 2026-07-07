@@ -7,7 +7,9 @@ rust-version = "1.91.0"
 license = "MIT"
 
 [dependencies]
+alloy-primitives = "1.5"
 clap = { version = "4.6.0", features = ["derive"] }
+comfy-table = "7.2"
 eyre = "0.6.12"
 forge = { path = "foundry/crates/forge" }
 forge-fmt = { path = "foundry/crates/fmt" }
@@ -23,6 +25,7 @@ serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 soldeer-core = { version = "=0.10.0", features = ["serde"] }
 tracing = "0.1"
+yansi = "1.0"
 
 [patch.crates-io]
 ## solar

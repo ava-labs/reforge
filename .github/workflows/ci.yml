@@ -39,6 +39,9 @@ jobs:
       - name: Run example test suite
         run: make test
 
+      - name: Run example snapshot smoke test
+        run: make snapshot
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

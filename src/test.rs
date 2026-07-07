@@ -2,13 +2,20 @@
 // See the file LICENSE for licensing terms.
 
 use forge::cmd::{install, test::TestArgs};
+use forge::result::TestOutcome;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::shell;
 
 use crate::project_compiler::ProjectCompiler;
 
-pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
-    let silent = test_args.junit || shell::is_json();
+/// Compiles the project with macro expansion applied and runs its tests, returning the outcome.
+///
+/// This mirrors [`TestArgs::compile_and_run`], but compiles through reforge's macro-aware
+/// [`ProjectCompiler`]. It is shared by the `test` and `snapshot` subcommands.
+pub(crate) async fn compile_and_run(
+    test_args: &mut TestArgs,
+    macros: crate::MacroRules,
+) -> eyre::Result<TestOutcome> {
     let (mut config, evm_opts) = test_args.load_config_and_evm_opts()?;
 
     if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings {
@@ -31,8 +38,11 @@ pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::R
 
     let output = compiler.compile(&project, macros)?;
 
-    let outcome =
-        test_args.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await?;
+    test_args.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
+}
 
+pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
+    let silent = test_args.junit || shell::is_json();
+    let outcome = compile_and_run(&mut test_args, macros).await?;
     outcome.ensure_ok(silent)
 }
