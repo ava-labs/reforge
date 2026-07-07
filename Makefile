@@ -30,4 +30,7 @@ build:
 test:
 	cargo run --example macros -- test --root sample_proj
 
-.PHONY: fmt fmt-check clippy check build test
+clean-artifacts:
+	rm -rf sample_proj/out sample_proj/cache
+
+.PHONY: fmt fmt-check clippy check build test flush-cache

@@ -139,7 +139,7 @@ pub fn expand_macros_with_sources(
                 .into_compiler()
         }
         None => {
-            let session = Session::builder().with_stderr_emitter().build();
+            let session = Session::builder().with_silent_emitter(None).build();
             Compiler::new(session)
         }
     };
