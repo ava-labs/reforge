@@ -40,4 +40,4 @@ snapshot:
 clean-artifacts:
 	rm -rf sample_proj/out sample_proj/cache
 
-.PHONY: fmt fmt-check clippy check build test flush-cache  snapshot coverage
+.PHONY: fmt fmt-check clippy check build test clean-artifacts  snapshot coverage
