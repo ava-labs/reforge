@@ -93,7 +93,7 @@ pub struct GasSnapshotArgs {
 
     /// All test arguments are supported
     #[command(flatten)]
-    test: forge::cmd::test::TestArgs,
+    test: crate::test::TestArgs,
 
     /// Additional configs for test results
     #[command(flatten)]
