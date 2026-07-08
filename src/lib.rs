@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use clap::Parser;
+use clap::{FromArgMatches, Parser, Subcommand};
 use forge::{
     args::setup,
     cmd::build::BuildArgs,
@@ -36,6 +36,8 @@ use foundry_compilers::{
 };
 use solar::sema::Gcx;
 
+use crate::test::TestArgs;
+
 #[derive(Parser)]
 #[command(
     name = "reforge",
@@ -51,8 +53,55 @@ pub struct Reforge {
     /// subcommand.
     #[arg(long, value_name = "GLOB")]
     pub display: Option<String>,
-    #[command(flatten)]
-    pub forge: Forge,
+
+    #[command(subcommand)]
+    pub forge: ForgeCommand,
+}
+
+pub enum ForgeCommand {
+    Intercept(TestArgs),
+    Forward(Forge),
+}
+
+impl FromArgMatches for ForgeCommand {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        match matches.subcommand() {
+            Some(("test" | "t", sub_matches)) => {
+                Ok(ForgeCommand::Intercept(TestArgs::from_arg_matches(sub_matches)?))
+            }
+            _ => Ok(ForgeCommand::Forward(Forge::from_arg_matches(matches)?)),
+        }
+    }
+
+    fn from_arg_matches_mut(matches: &mut clap::ArgMatches) -> Result<Self, clap::Error> {
+        Self::from_arg_matches(matches)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+
+    fn update_from_arg_matches_mut(
+        &mut self,
+        matches: &mut clap::ArgMatches,
+    ) -> Result<(), clap::Error> {
+        self.update_from_arg_matches(matches)
+    }
+}
+
+impl Subcommand for ForgeCommand {
+    fn augment_subcommands(cmd: clap::Command) -> clap::Command {
+        ForgeSubcommand::augment_subcommands(cmd)
+    }
+
+    fn augment_subcommands_for_update(cmd: clap::Command) -> clap::Command {
+        ForgeSubcommand::augment_subcommands_for_update(cmd)
+    }
+
+    fn has_subcommand(name: &str) -> bool {
+        ForgeSubcommand::has_subcommand(name)
+    }
 }
 
 /// A macro rule function: takes the global compiler context and mutable preprocessing data,
@@ -163,33 +212,61 @@ impl MacroRules {
     pub fn run(self) -> eyre::Result<()> {
         setup()?;
         let args = Reforge::parse();
-        args.forge.global.init()?;
 
-        if let Some(glob) = args.display {
-            let ForgeSubcommand::Build(build_args) = args.forge.cmd else {
-                panic!("--display is only supported with the `build` subcommand");
-            };
-            let (root, sources) = self.expand_for_display(build_args)?;
-            return display::display_sources(&root, &glob, &sources);
-        }
+        match args.forge {
+            ForgeCommand::Intercept(test_args) => {
+                test_args.global.init()?;
+                let macros = if !args.disable_macros {
+                    if self.rules.is_empty() {
+                        tracing::info!("No macros rules present, skipping macro expansion.");
+                        println!("No macros rules present, skipping macro expansion.");
+                        MacroRules::default()
+                    } else {
+                        self
+                    }
+                } else {
+                    MacroRules::default()
+                };
+                let runtime = test_args.global.tokio_runtime();
+                runtime.block_on(test::test(test_args, macros))
+            }
+            ForgeCommand::Forward(forge) => {
+                forge.global.init()?;
 
-        if !args.disable_macros {
-            if self.rules.is_empty() {
-                tracing::info!("No macros rules present, skipping macro expansion.");
-                println!("No macros rules present, skipping macro expansion.");
-            } else if let ForgeSubcommand::Build(build_args) = args.forge.cmd {
-                if build_args.build.dynamic_test_linking {
-                    tracing::warn!(
-                        "Dynamic linking is not supported with macros expansion, skipping."
-                    );
-                    println!("Dynamic linking is not supported with macros expansion, skipping.");
+                if let Some(glob) = args.display {
+                    let ForgeSubcommand::Build(build_args) = forge.cmd else {
+                        panic!("--display is only supported with the `build` subcommand");
+                    };
+                    let (root, sources) = self.expand_for_display(build_args)?;
+                    return display::display_sources(&root, &glob, &sources);
                 }
-                return args.forge.global.block_on(build::build(build_args, self));
-            } else if let ForgeSubcommand::Test(test_args) = args.forge.cmd {
-                return args.forge.global.block_on(test::test(test_args, self));
+
+                if !args.disable_macros {
+                    if self.rules.is_empty() {
+                        tracing::info!("No macros rules present, skipping macro expansion.");
+                        println!("No macros rules present, skipping macro expansion.");
+                    } else {
+                        let Forge { global, cmd } = forge;
+                        return match cmd {
+                            ForgeSubcommand::Build(build_args) => {
+                                if build_args.build.dynamic_test_linking {
+                                    tracing::warn!(
+                                        "Dynamic linking is not supported with macros expansion, skipping."
+                                    );
+                                    println!(
+                                        "Dynamic linking is not supported with macros expansion, skipping."
+                                    );
+                                }
+                                global.block_on(build::build(build_args, self))
+                            }
+                            cmd => forge::args::run_command(Forge { global, cmd }),
+                        };
+                    }
+                }
+
+                forge::args::run_command(forge)
             }
         }
-        forge::args::run_command(args.forge)
     }
 
     fn expand_for_display(&self, build_args: BuildArgs) -> eyre::Result<(PathBuf, Sources)> {
