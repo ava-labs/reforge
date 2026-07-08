@@ -6837,7 +6837,6 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "soldeer-core",
- "tempfile",
  "tokio",
  "tracing",
  "yansi",

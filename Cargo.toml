@@ -38,9 +38,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 yansi = "1.0"
 
-[dev-dependencies]
-tempfile = "3"
-
 [patch.crates-io]
 ## solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
