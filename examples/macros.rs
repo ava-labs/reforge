@@ -1,7 +1,7 @@
 // Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use foundry_compilers::error::SolcError;
 use reforge::{MacroRules, PreprocessingData, get_comment};
@@ -22,7 +22,7 @@ fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> foundry_compilers::erro
 }
 
 /// A macro that adds a function for each struct definition that prints the struct name.
-/// The function is injected into the pre-existing `Library{name}` library.
+/// The function is injected into the pre-existing `{name}Library` library.
 fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
     // Collect (offset, injected_text) per file path.
     let mut insertions: HashMap<std::path::PathBuf, Vec<(usize, String)>> = HashMap::new();
@@ -61,20 +61,11 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
         insertions.entry(path.to_path_buf()).or_default().push((close_brace_offset, func));
     }
 
-    // In this example macro, we handle the offset adjustments manually. This is more efficient
-    // but more complicated that the provided helper methods.
-    let mut new_adjustments = vec![];
-    for (path, mut inserts) in insertions {
-        let src = data.input.get_mut(&path).unwrap();
-        // Apply in reverse offset order so earlier positions aren't shifted.
-        inserts.sort_by_key(|b| std::cmp::Reverse(b.0));
-        let content = Arc::make_mut(&mut src.content);
-        for (offset, text) in &inserts {
-            content.insert_str(*offset, text.as_str());
-            new_adjustments.push((path.clone(), *offset, text.len() as isize));
+    for (path, inserts) in insertions {
+        for (offset, text) in inserts {
+            data.insert(&path, offset, &text);
         }
     }
-    data.offset_adjustments.extend(new_adjustments);
     Ok(())
 }
 
@@ -172,19 +163,10 @@ fn make_libraries_contracts(
         let Some(comment_block) = get_comment(ctx, lib.source, lib.span, data) else {
             continue;
         };
-        let Some(src) = data.input.get_mut(path) else {
-            continue;
-        };
 
-        // Compute the offsets adjustments manually.
         if comment_block.contains("#[derive(promote)]") {
             let lib_offset = (lib.span.lo().0 - source.file.start_pos.0) as usize;
-            let content = Arc::make_mut(&mut src.content);
-            content.replace_range(lib_offset..lib_offset + "library".len(), "contract");
-            // "contract" is 1 byte longer than "library"; record the shift so subsequent
-            // macro rules can adjust HIR-derived offsets within this file.
-            let delta = "contract".len() as isize - "library".len() as isize;
-            data.offset_adjustments.push((path.to_path_buf(), lib_offset, delta));
+            data.replace(path, lib_offset..lib_offset + "library".len(), "contract");
         }
     }
     Ok(())
