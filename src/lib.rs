@@ -6,8 +6,8 @@ mod coverage;
 pub mod display;
 mod errors;
 mod lockfile;
-mod offsets;
 mod project_compiler;
+mod span_utils;
 mod snapshot;
 mod test;
 pub mod testing;
@@ -39,7 +39,8 @@ use foundry_compilers::{
 };
 use solar::sema::Gcx;
 
-use crate::{offsets::OffsetAdjustment, test::TestArgs};
+pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation};
+use crate::{span_utils::OffsetAdjustment, test::TestArgs};
 
 #[derive(Parser)]
 #[command(
@@ -140,67 +141,22 @@ pub struct PreprocessingData<'pre> {
     pub offset_adjustments: OffsetAdjustment,
 }
 
-impl PreprocessingData<'_> {
+impl<'pre> PreprocessingData<'pre> {
     pub fn adjusted_offset(&self, path: &Path, original_offset: usize) -> usize {
         self.offset_adjustments.adjusted_offset(path, original_offset)
     }
 
-    /// Inserts `text` into the source file at `path` at the position corresponding to
-    /// `original_offset` in the original, unmodified source, and records the edit in
-    /// [`PreprocessingData::offset_adjustments`] so that subsequent macro rules remain correct.
+    /// Returns a builder for inserting or replacing text in `path`.
     ///
-    /// `original_offset` must be a byte offset derived from a Solar HIR span (i.e. relative to
-    /// the unmodified source). The method translates it to the current position in the
-    /// already-modified text before performing the insertion.
-    pub fn insert(
-        &mut self,
-        path: impl AsRef<Path>,
-        original_offset: usize,
-        text: impl AsRef<str>,
-    ) {
-        let path = path.as_ref();
-        let src = self.input.get_mut(path).unwrap();
-        let content = Arc::make_mut(&mut src.content);
-        let adjusted = self.offset_adjustments.record(
-            path,
-            original_offset,
-            content.as_str(),
-            text.as_ref(),
-            "",
-        );
-        content.insert_str(adjusted, text.as_ref());
-    }
-
-    /// Replaces the source bytes at `original_range` (in the original, unmodified file) with
-    /// `text`, and records the resulting length delta in `offset_adjustments` so that subsequent
-    /// calls using offsets derived from the original source remain correct.
-    ///
-    /// Both range endpoints are translated through any previously recorded adjustments before the
-    /// replacement is applied, so overlapping or out-of-order edits to the same file are handled
-    /// correctly. Does nothing if `original_range` is empty or inverted.
-    pub fn replace(
-        &mut self,
-        path: impl AsRef<Path>,
-        original_range: std::ops::Range<usize>,
-        text: impl AsRef<str>,
-    ) {
-        let path = path.as_ref();
-        if original_range.end <= original_range.start {
-            return;
-        }
-        let adjusted_start = self.adjusted_offset(path, original_range.start);
-        let adjusted_end = self.adjusted_offset(path, original_range.end);
-        let src = self.input.get_mut(path).unwrap();
-        let content = Arc::make_mut(&mut src.content);
-        let removed = content[adjusted_start..adjusted_end].to_owned();
-        self.offset_adjustments.record(
-            path,
-            original_range.start,
-            content.as_str(),
-            text.as_ref(),
-            &removed,
-        );
-        content.replace_range(adjusted_start..adjusted_end, text.as_ref());
+    /// Call [`.with(name, loc)`](AdjustmentEntry::with) on the returned builder before
+    /// [`.insert()`](AdjustmentEntry::insert) or [`.replace()`](AdjustmentEntry::replace) to
+    /// attach macro attribution so that compiler errors in the generated code are reported with
+    /// the macro name and (optionally) the original triggering location.
+    pub fn entry<'a>(&'a mut self, path: &'a Path, text: &'a str) -> AdjustmentEntry<'a>
+    where
+        'pre: 'a,
+    {
+        AdjustmentEntry::new(path, text, &mut *self.input, &mut self.offset_adjustments)
     }
 }
 
