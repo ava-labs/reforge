@@ -282,7 +282,11 @@ fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
 /// Compares the set of tests with an existing gas snapshot.
 ///
 /// Returns true all tests match
-fn check(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, tolerance: Option<u32>) -> bool {
+fn check(
+    tests: Vec<SuiteTestResult>,
+    snaps: Vec<GasSnapshotEntry>,
+    tolerance: Option<u32>,
+) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
