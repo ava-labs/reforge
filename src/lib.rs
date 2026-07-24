@@ -17,13 +17,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use clap::Parser;
+use clap::{FromArgMatches, Parser, Subcommand};
 use forge::{
     args::setup,
     cmd::build::BuildArgs,
     opts::{Forge, ForgeSubcommand},
 };
-use foundry_cli::utils::LoadConfig;
+use foundry_cli::{opts::GlobalArgs, utils::LoadConfig};
 use foundry_common::{
     errors::convert_solar_errors,
     version::{LONG_VERSION, SHORT_VERSION},
@@ -47,6 +47,9 @@ use crate::{offsets::OffsetAdjustment, test::TestArgs};
     about = "A tool for combining with Forge with macro expansions in Solidity.",
 )]
 pub struct Reforge {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+
     #[arg(long, help = "Disable macro expansion.")]
     pub disable_macros: bool,
     /// Print macro-expanded sources whose paths (relative to the build root)
@@ -70,7 +73,16 @@ impl FromArgMatches for ForgeCommand {
             Some(("test" | "t", sub_matches)) => {
                 Ok(ForgeCommand::Intercept(TestArgs::from_arg_matches(sub_matches)?))
             }
-            _ => Ok(ForgeCommand::Forward(Forge::from_arg_matches(matches)?)),
+            _ => {
+                // With global = true, clap stores global args (verbosity, quiet, etc.) in the
+                // subcommand matches, not in the root matches. Parse GlobalArgs from there.
+                let global = match matches.subcommand() {
+                    Some((_, sub_matches)) => GlobalArgs::from_arg_matches(sub_matches)?,
+                    None => GlobalArgs::default(),
+                };
+                let cmd = ForgeSubcommand::from_arg_matches(matches)?;
+                Ok(ForgeCommand::Forward(Forge { global, cmd }))
+            }
         }
     }
 
