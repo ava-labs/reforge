@@ -7,8 +7,8 @@ pub mod display;
 mod errors;
 mod lockfile;
 mod project_compiler;
-mod span_utils;
 mod snapshot;
+mod span_utils;
 mod test;
 pub mod testing;
 
