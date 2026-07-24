@@ -32,7 +32,7 @@ cargo build
 
 ## Usage
 
-Reforge is a library. Downstream users write a small Rust binary that depends on it, define their macro rules, and call `MacroRules::run()` as their `main`. The resulting binary is a drop-in replacement for `forge`, supporting the `build`, `test` and `snapshot` subcommands with macro expansion applied automatically.
+Reforge is a library. Downstream users write a small Rust binary that depends on it, define their macro rules, and call `MacroRules::run()` as their `main`. The resulting binary is a drop-in replacement for `forge`, supporting the `build`, `test`, `coverage`, and `snapshot` subcommands with macro expansion applied automatically.
 
 ### 1. Define macro rules
 
@@ -181,6 +181,11 @@ cargo run --example macros -- test --root sample_proj
 **Snapshot:**
 ```sh
 cargo run --example macros -- snapshot --root sample_proj
+```
+
+**Coverage:**
+```sh
+cargo run --example macros -- coverage --root sample_proj
 ```
 
 **Display expanded output:**

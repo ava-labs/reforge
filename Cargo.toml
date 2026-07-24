@@ -18,8 +18,11 @@ foundry-cli = { path = "foundry/crates/cli" }
 foundry-common = { path = "foundry/crates/common" }
 foundry-compilers = { version = "0.19.14", default-features = false }
 foundry-config = { path = "foundry/crates/config" }
+foundry-evm = { path = "foundry/crates/evm/evm" }
 glob = "0.3"
+rayon = "1.12"
 regex = "1.12.3"
+semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }

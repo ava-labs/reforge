@@ -30,8 +30,11 @@ build:
 test:
 	cargo run --example macros -- test --root sample_proj
 
+coverage:
+	cargo run --example macros -- coverage --root sample_proj
+
 snapshot:
 	cargo run --example macros -- snapshot --root sample_proj --snap target/.gas-snapshot-smoke
 	cargo run --example macros -- snapshot --root sample_proj --check target/.gas-snapshot-smoke
 
-.PHONY: fmt fmt-check clippy check build test snapshot
+.PHONY: fmt fmt-check clippy check build test snapshot coverage
