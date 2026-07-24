@@ -1,3 +1,6 @@
+// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 //! Test utilities for verifying macro expansions against expected Solidity output.
 
 use std::{collections::HashSet, ops::ControlFlow, path::Path};

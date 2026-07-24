@@ -1,3 +1,6 @@
+// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 use forge::cmd::{install, test::TestArgs};
 use foundry_cli::utils::LoadConfig;
 use foundry_common::shell;
