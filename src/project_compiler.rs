@@ -11,8 +11,10 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, Compiler, Project, ProjectCompileOutput,
     artifacts::{BytecodeObject, Contract, Source},
-    project::Preprocessor,
+    multi::{MultiCompiler, MultiCompilerError},
 };
+
+use crate::MacroRules;
 
 /// https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
@@ -39,14 +41,11 @@ pub(crate) struct ProjectCompiler {
 }
 
 impl ProjectCompiler {
-    pub fn compile<C: Compiler<CompilerContract = Contract>, P>(
+    pub fn compile(
         mut self,
-        project: &Project<C>,
-        preprocessor: P,
-    ) -> eyre::Result<ProjectCompileOutput<C>>
-    where
-        P: Preprocessor<C> + 'static,
-    {
+        project: &Project<MultiCompiler>,
+        preprocessor: MacroRules,
+    ) -> eyre::Result<ProjectCompileOutput<MultiCompiler>> {
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
             std::process::exit(0);
@@ -54,6 +53,9 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
+        // Clone the Arc before moving preprocessor into the closure so we can remap
+        // error line numbers after compilation.
+        let macros = preprocessor.clone();
         self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
@@ -65,7 +67,17 @@ impl ProjectCompiler {
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
 
             compiler = compiler.with_preprocessor(preprocessor);
-            compiler.compile().map_err(Into::into)
+            let mut output: ProjectCompileOutput<MultiCompiler> =
+                compiler.compile().map_err(eyre::Error::from)?;
+
+            // Remap solc error line numbers from expanded source back to original source.
+            for error in output.output_mut().errors.iter_mut() {
+                if let MultiCompilerError::Solc(e) = error {
+                    crate::errors::correct_fmt_msg(&macros, e);
+                }
+            }
+
+            Ok(output)
         })
     }
 
@@ -90,6 +102,8 @@ impl ProjectCompiler {
         })?;
 
         if bail && output.has_compiler_errors() {
+            #[cfg(test)]
+            crate::errors::TEST_COMPILER_OUTPUT.lock().unwrap().push(format!("{output}"));
             eyre::bail!("{output}")
         }
 

@@ -3,7 +3,7 @@
 
 //! Test utilities for verifying macro expansions against expected Solidity output.
 
-use std::{collections::HashSet, ops::ControlFlow, path::Path};
+use std::{collections::HashSet, path::Path};
 
 use foundry_compilers::{
     ProjectPathsConfig, SourceParser,
@@ -41,7 +41,7 @@ fn load_sol_sources_recursive(dir: &Path, sources: &mut Sources) -> eyre::Result
     Ok(())
 }
 
-/// Runs `macro_rule` over the Solidity sources in `source`, then compares the
+/// Runs `macro_rules` over the Solidity sources in `source`, then compares the
 /// expanded output file-by-file against the pre-expanded sources in `expected`
 /// (matched by path relative to their respective roots).
 ///
@@ -94,7 +94,7 @@ pub fn test_macros(
     Ok(())
 }
 
-/// Runs `macro_rules` over the Solidity sources in `source` and expects at the
+/// Runs `macro_rule` over the Solidity sources in `source` and expects the
 /// rule to return an error. Returns the error if one is produced, else fails
 /// if the rule completes without error.
 pub fn test_macro_err(source: impl AsRef<Path>, macro_rule: Macro) -> eyre::Result<eyre::Report> {
@@ -155,9 +155,10 @@ pub fn expand_macros_with_sources(
                 }
             }
             pcx.parse();
-            let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
-                return Ok(());
-            };
+            // lower_asts() may return Break when pre-expansion code references symbols that macros
+            // will inject. Run rules regardless — item/struct definitions are present in the
+            // partial HIR.
+            let _ = compiler.lower_asts();
 
             let relative_paths_storage;
             let src_dir = match paths {
@@ -173,7 +174,7 @@ pub fn expand_macros_with_sources(
                 root_dir: root,
                 src_dir,
                 mocks: &mut mocks,
-                offset_adjustments: Vec::new(),
+                offset_adjustments: Default::default(),
             };
             let gcx = compiler.gcx();
             for rule in macro_rules {
