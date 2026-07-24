@@ -103,15 +103,33 @@ fn remap_arrow_line(macros: &MacroRules, source: &Path, line: &str) -> ControlFl
     let Ok(line_num) = line_str.parse::<isize>() else {
         return ControlFlow::Continue(());
     };
-    match macros.offset_adjustments.lock().unwrap().get_original_line(source, line_num) {
+    let adjustments = macros.offset_adjustments.lock().unwrap();
+    match adjustments.get_original_line(source, line_num) {
         None => ControlFlow::Break(None),
-        Some(remapped) => ControlFlow::Break(Some(format!(
-            "{beginning}{ARROW} {path}:{remapped}:{col}{trailing}"
-        ))),
+        Some(remapped) => {
+            let remapped_col = remap_col(&adjustments, source, remapped, col);
+            ControlFlow::Break(Some(format!(
+                "{beginning}{ARROW} {path}:{remapped}:{remapped_col}{trailing}"
+            )))
+        }
     }
 }
 
-/// Remaps the line number in an old-style source-location line.
+/// Remaps a column string against `original_line`, returning the remapped column as a string.
+/// Falls back to the original text when it does not parse as a number.
+fn remap_col(
+    adjustments: &crate::offsets::OffsetAdjustment,
+    source: &Path,
+    original_line: usize,
+    col: &str,
+) -> String {
+    match col.trim().parse::<isize>() {
+        Ok(c) => adjustments.get_original_col(source, original_line, c).to_string(),
+        Err(_) => col.to_string(),
+    }
+}
+
+/// Remaps the line and column numbers in an old-style source-location line.
 ///
 /// Returns `None` if the line falls in macro-generated code. Returns `Some` of the remapped
 /// line on success, or `Some` of the original line if it cannot be parsed.
@@ -121,7 +139,13 @@ fn remap_old_style_line(macros: &MacroRules, source: &Path, line: &str) -> Optio
     let Some(rest) = rest.strip_prefix(':') else { return Some(line.to_string()) };
     let Some((line_str, after_line)) = rest.split_once(':') else { return Some(line.to_string()) };
     let Ok(line_num) = line_str.parse::<isize>() else { return Some(line.to_string()) };
-    let remapped = macros.offset_adjustments.lock().unwrap().get_original_line(source, line_num)?;
+    let adjustments = macros.offset_adjustments.lock().unwrap();
+    let remapped = adjustments.get_original_line(source, line_num)?;
+    // `after_line` is "COL: ErrorType: message"; remap the leading column, keep the rest.
+    let after_line = match after_line.split_once(':') {
+        Some((col, tail)) => format!("{}:{tail}", remap_col(&adjustments, source, remapped, col)),
+        None => after_line.to_string(),
+    };
     Some(format!("{source_str}:{remapped}:{after_line}"))
 }
 
@@ -269,5 +293,45 @@ mod tests {
             err.contains("Foo.sol:4:"),
             "expected error remapped to original line 4, got:\n{err}"
         );
+    }
+
+    #[test]
+    fn test_arrow_column_is_remapped() {
+        use std::path::Path;
+
+        // A single-line "library" -> "contract" replacement on line 3 shifts every column after
+        // it right by one. An error reported at expanded column 10 must map back to column 9.
+        let source = Path::new("Foo.sol");
+        let macros = crate::MacroRules::default();
+        {
+            let mut adj = macros.offset_adjustments.lock().unwrap();
+            let src = "a\nb\nlibrary Foo {\n}";
+            adj.record(source, 4, src, "contract", "library");
+        }
+
+        let line = " --> Foo.sol:3:10:";
+        match super::remap_arrow_line(&macros, source, line) {
+            std::ops::ControlFlow::Break(Some(remapped)) => {
+                assert_eq!(remapped, " --> Foo.sol:3:9:");
+            }
+            other => panic!("expected remapped arrow line, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_old_style_column_is_remapped() {
+        use std::path::Path;
+
+        let source = Path::new("Foo.sol");
+        let macros = crate::MacroRules::default();
+        {
+            let mut adj = macros.offset_adjustments.lock().unwrap();
+            let src = "a\nb\nlibrary Foo {\n}";
+            adj.record(source, 4, src, "contract", "library");
+        }
+
+        let line = "Foo.sol:3:10: Error: something";
+        let remapped = super::remap_old_style_line(&macros, source, line).expect("should remap");
+        assert_eq!(remapped, "Foo.sol:3:9: Error: something");
     }
 }

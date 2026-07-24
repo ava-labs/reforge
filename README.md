@@ -95,7 +95,7 @@ More examples can be found in `examples/macros.rs`.
 
 ### Compiler error remapping
 
-When `solc` reports an error in a macro-expanded file, Reforge automatically translates the line numbers back to the original source. If the error falls inside code that a macro injected, the message is replaced with `"error in macro-generated code: <original message>"` so it is clearly attributed. No action is required from macro authors.
+When `solc` reports an error in a macro-expanded file, Reforge automatically translates the line and column numbers back to the original source. Column numbers shift when a macro rewrites text inline (e.g. replacing `library` with `contract`), so both coordinates are remapped. If the error falls inside code that a macro injected, the message is replaced with `"error in macro-generated code: <original message>"` so it is clearly attributed. No action is required from macro authors.
 
 ## Testing
 

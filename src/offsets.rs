@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Byte offset and line-number adjustments accumulated by macro rules that change source text.
-/// Each entry is `(path, Adjustment)` where [`Adjustment`] records the original offset and line,
-/// and the signed byte and line deltas introduced by the edit.
+/// Byte offset, line-number and column-number adjustments accumulated by macro rules that change
+/// source text. Each entry is `(path, Adjustment)` where [`Adjustment`] records the original
+/// offset, line and column, and the signed byte, line and column deltas introduced by the edit.
 #[derive(Debug, Default, Clone)]
 pub struct OffsetAdjustment(Vec<(PathBuf, Adjustment)>);
 
@@ -13,8 +13,16 @@ pub struct OffsetAdjustment(Vec<(PathBuf, Adjustment)>);
 pub struct Adjustment {
     pub original_offset: usize,
     pub original_line: usize,
+    /// 1-based column of the edit position in the original source.
+    pub original_col: usize,
     pub delta_offset: isize,
     pub delta_line: isize,
+    /// Signed change in column applied to content that follows the edit on the same line.
+    ///
+    /// Only single-line edits (no newline in either the added or removed text) shift the
+    /// columns of the content that follows them; multi-line edits push subsequent content
+    /// onto fresh lines whose columns are unaffected, so their `delta_col` is `0`.
+    pub delta_col: isize,
 }
 
 impl OffsetAdjustment {
@@ -39,6 +47,10 @@ impl OffsetAdjustment {
     /// `original_line` is derived by counting newlines in `source` up to the adjusted offset and
     /// subtracting accumulated line deltas from all previously recorded edits at or before
     /// `original_offset`, mapping the current position back to original-source coordinates.
+    ///
+    /// `original_col` is derived analogously: the current column (bytes since the last newline)
+    /// is mapped back to original coordinates by subtracting the column deltas of prior edits
+    /// that lie earlier on the same original line.
     pub fn record(
         &mut self,
         path: &Path,
@@ -56,12 +68,43 @@ impl OffsetAdjustment {
             .map(|(_, a)| a.delta_line)
             .sum();
         let original_line = (current_line - accumulated_line_delta) as usize;
+
+        // Column of the edit in the current (post-prior-edits) source, then mapped back to
+        // original coordinates by undoing the column shifts of earlier same-line edits.
+        let line_start = source[..adjusted_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let current_col = (adjusted_offset - line_start) as isize + 1;
+        let accumulated_col_delta: isize = self
+            .iter()
+            .filter(|(p, a)| {
+                p.as_path() == path
+                    && a.original_line == original_line
+                    && a.original_offset < original_offset
+            })
+            .map(|(_, a)| a.delta_col)
+            .sum();
+        let original_col = (current_col - accumulated_col_delta).max(1) as usize;
+
         let delta_offset = added.len() as isize - removed.len() as isize;
-        let delta_line = added.bytes().filter(|&b| b == b'\n').count() as isize
-            - removed.bytes().filter(|&b| b == b'\n').count() as isize;
+        let added_newlines = added.bytes().filter(|&b| b == b'\n').count() as isize;
+        let removed_newlines = removed.bytes().filter(|&b| b == b'\n').count() as isize;
+        let delta_line = added_newlines - removed_newlines;
+        // Only single-line edits shift the columns of the content that follows them. Multi-line
+        // edits move subsequent content onto fresh lines whose columns start over.
+        let delta_col = if added_newlines == 0 && removed_newlines == 0 {
+            added.len() as isize - removed.len() as isize
+        } else {
+            0
+        };
         self.push((
             path.to_path_buf(),
-            Adjustment { original_offset, original_line, delta_offset, delta_line },
+            Adjustment {
+                original_offset,
+                original_line,
+                original_col,
+                delta_offset,
+                delta_line,
+                delta_col,
+            },
         ));
         adjusted_offset
     }
@@ -84,6 +127,24 @@ impl OffsetAdjustment {
             }
         }
         Some((line - accumulated_delta) as usize)
+    }
+
+    /// Maps a column number in the macro-expanded source back to the corresponding column in the
+    /// original source.
+    ///
+    /// `original_line` is the line the column lives on *in original coordinates* (i.e. the result
+    /// of [`OffsetAdjustment::get_original_line`]). The column is remapped by undoing the shifts
+    /// of every same-line edit that precedes it. Only single-line edits carry a non-zero
+    /// `delta_col`, so multi-line insertions (whole-line macro blocks) leave columns untouched.
+    pub fn get_original_col(&self, source: &Path, original_line: usize, col: isize) -> usize {
+        let col_delta: isize = self
+            .iter()
+            .filter(|(p, a)| {
+                p == source && a.original_line == original_line && (a.original_col as isize) < col
+            })
+            .map(|(_, a)| a.delta_col)
+            .sum();
+        (col - col_delta).max(1) as usize
     }
 
     /// Check if a line belongs to macro-generated code.
@@ -159,10 +220,52 @@ mod tests {
     }
 
     #[test]
+    fn test_record_columns_whole_line_insert() {
+        // Whole-line macro insertions (text bracketed by newlines) must not shift columns.
+        let adj = setup();
+        let (_, adjustment) = &adj[0];
+        assert_eq!(adjustment.original_col, 1);
+        assert_eq!(adjustment.delta_col, 0);
+        let (_, adj2) = &adj[1];
+        assert_eq!(adj2.original_col, 1);
+        assert_eq!(adj2.delta_col, 0);
+    }
+
+    #[test]
     fn test_get_original_line() {
         let adj = setup();
         let line = adj.get_original_line(Path::new("foo.sol"), 2 + 6).expect("Test failed");
         assert_eq!(line, 2);
+    }
+
+    #[test]
+    fn test_inline_replace_shifts_columns() {
+        // Replace "library" (7 bytes) with "contract" (8 bytes) at the start of line 1. This is a
+        // single-line edit, so content after it on the same line shifts right by one column.
+        let mut adj = OffsetAdjustment::default();
+        let src = "library Foo {\n}";
+        let offset = adj.record(Path::new("foo.sol"), 0, src, "contract", "library");
+        assert_eq!(offset, 0);
+
+        let (_, adjustment) = &adj[0];
+        assert_eq!(adjustment.original_line, 1);
+        assert_eq!(adjustment.original_col, 1);
+        assert_eq!(adjustment.delta_offset, 1);
+        assert_eq!(adjustment.delta_line, 0);
+        assert_eq!(adjustment.delta_col, 1);
+
+        // "Foo" is at column 10 in the expanded "contract Foo" and column 9 in "library Foo".
+        assert_eq!(adj.get_original_col(Path::new("foo.sol"), 1, 10), 9);
+        // A column before the edit is unchanged.
+        assert_eq!(adj.get_original_col(Path::new("foo.sol"), 1, 1), 1);
+        // A column on a different line is unaffected by the edit.
+        assert_eq!(adj.get_original_col(Path::new("foo.sol"), 2, 5), 5);
+    }
+
+    #[test]
+    fn test_get_original_col_no_adjustments() {
+        let adj = OffsetAdjustment::default();
+        assert_eq!(adj.get_original_col(Path::new("foo.sol"), 3, 7), 7);
     }
 
     #[test]
