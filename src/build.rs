@@ -61,9 +61,28 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
         files,
     };
 
-    let preprocessed_sources = macros.preprocessed_sources.clone();
+    let rules = macros.rules.clone();
+    let input_sources = macros.preprocessed_sources.clone();
     let mut output = compiler.compile(&project, macros)?;
-    let preprocessed_sources = preprocessed_sources.lock().unwrap().take();
+
+    // When compilation is skipped (all outputs cached) the preprocessor is never called, so
+    // `preprocessed_sources` is None.  Run a lightweight expansion pass so the linter always
+    // analyses macro-expanded source rather than the original pre-expansion text.
+    let preprocessed_sources = match input_sources.lock().unwrap().take() {
+        Some(sources) => Some(sources),
+        None if !rules.is_empty() => {
+            let paths = project.paths.clone().with_language::<SolcLanguage>();
+            let sources = project.paths.read_input_files()?;
+            crate::testing::expand_macros_with_sources(
+                sources,
+                project.root(),
+                Some(&paths),
+                &rules,
+            )
+            .ok()
+        }
+        None => None,
+    };
 
     // Cache project selectors.
     cache_local_signatures(&output)?;

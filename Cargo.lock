@@ -6811,6 +6811,7 @@ name = "reforge"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "chrono",
  "clap",
  "comfy-table",
  "eyre",
@@ -6821,8 +6822,14 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-debugger",
  "foundry-evm",
  "glob",
+ "inferno",
+ "itertools 0.14.0",
+ "libc",
+ "opener",
+ "quick-junit",
  "rayon",
  "regex",
  "semver 1.0.28",
@@ -6830,6 +6837,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "soldeer-core",
+ "tokio",
  "tracing",
  "yansi",
 ]
