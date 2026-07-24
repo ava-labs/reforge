@@ -50,6 +50,12 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 /// Mirrors [`forge::cmd::coverage::CoverageArgs`]; the attributes must be kept in
 /// sync so the flags parse identically.
 #[derive(Parser)]
+#[command(after_long_help = r#"Compatibility:
+  `forge coverage` supports test filters and `--watch`, but not test-only output or
+  execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
+  symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
+  `--report lcov` for interoperable coverage data or `--report attribution` for
+  Foundry's per-test JSON attribution report."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
