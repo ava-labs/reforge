@@ -5,6 +5,7 @@ mod build;
 pub mod display;
 mod lockfile;
 mod project_compiler;
+mod snapshot;
 mod test;
 pub mod testing;
 
@@ -187,6 +188,11 @@ impl MacroRules {
                 return args.forge.global.block_on(build::build(build_args, self));
             } else if let ForgeSubcommand::Test(test_args) = args.forge.cmd {
                 return args.forge.global.block_on(test::test(test_args, self));
+            } else if matches!(args.forge.cmd, ForgeSubcommand::Snapshot(_)) {
+                // Foundry's `GasSnapshotArgs` hides its fields, so we re-parse the
+                // process arguments into reforge's own mirror of the struct.
+                let snapshot_args = snapshot::parse_from_env();
+                return args.forge.global.block_on(snapshot_args.run(self));
             }
         }
         forge::args::run_command(args.forge)
