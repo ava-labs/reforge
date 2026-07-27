@@ -64,13 +64,32 @@ impl PrimaryLocation {
         }
     }
 
-    fn remapped(&self, remapped_line: usize) -> String {
+    /// The primary column, as reported by Solc, in expanded-source coordinates.
+    fn col(&self) -> &str {
+        match self {
+            Self::Arrow { col, .. } => col,
+            // `after_line` is "COL: ErrorType: message"; the column is the leading segment.
+            Self::OldStyle { after_line, .. } => {
+                after_line.split_once(':').map_or(after_line.as_str(), |(col, _)| col)
+            }
+        }
+    }
+
+    /// Rebuilds the location line with the remapped line number, substituting `remapped_col` for
+    /// the column when it is `Some` and leaving the original column text in place otherwise.
+    fn remapped(&self, remapped_line: usize, remapped_col: Option<usize>) -> String {
         match self {
             Self::Arrow { beginning, path, col, trailing, .. } => {
+                let col = remapped_col.map_or_else(|| col.clone(), |c| c.to_string());
                 format!("{beginning}{ARROW} {path}:{remapped_line}:{col}{trailing}")
             }
             Self::OldStyle { source_str, after_line, .. } => {
-                format!("{source_str}:{remapped_line}:{after_line}")
+                // Replace the leading column segment, keep the "ErrorType: message" tail.
+                let after = match (remapped_col, after_line.split_once(':')) {
+                    (Some(c), Some((_, tail))) => format!("{c}:{tail}"),
+                    _ => after_line.clone(),
+                };
+                format!("{source_str}:{remapped_line}:{after}")
             }
         }
     }
@@ -122,9 +141,18 @@ fn remap_fmt_msg(
     fmtd_msg: &str,
     primary: PrimaryLocation,
 ) -> String {
-    let remapped =
-        macros.offset_adjustments.lock().unwrap().get_original_line(source, primary.line_num());
-    let remapped_primary = primary.remapped(remapped);
+    let (remapped, remapped_col) = {
+        let adjustments = macros.offset_adjustments.lock().unwrap();
+        let line = adjustments.get_original_line(source, primary.line_num());
+        let col = primary
+            .col()
+            .trim()
+            .parse::<isize>()
+            .ok()
+            .map(|c| adjustments.get_original_col(source, line, c));
+        (line, col)
+    };
+    let remapped_primary = primary.remapped(remapped, remapped_col);
     let is_old_style = matches!(primary, PrimaryLocation::OldStyle { .. });
 
     let mut lines = fmtd_msg.lines();
@@ -362,6 +390,62 @@ mod tests {
         assert!(
             err.contains("Foo.sol:5:"),
             "expected error remapped to original line 5, got:\n{err}"
+        );
+    }
+
+    /// Builds a `MacroRules` carrying a single inline `library` -> `contract` replacement on line
+    /// 3 (a single-line edit that shifts columns right by one from column 1 onward).
+    fn macros_with_inline_replace() -> crate::MacroRules {
+        use std::path::PathBuf;
+
+        use crate::span_utils::Adjustment;
+
+        let macros = crate::MacroRules::default();
+        macros.offset_adjustments.lock().unwrap().push((
+            PathBuf::from("Foo.sol"),
+            Adjustment {
+                original_offset: 4,
+                original_line: 3,
+                original_col: 1,
+                delta_offset: 1,
+                delta_line: 0,
+                delta_col: 1,
+                macro_name: None,
+                original_location: None,
+            },
+        ));
+        macros
+    }
+
+    #[test]
+    fn test_arrow_column_is_remapped() {
+        use std::path::Path;
+
+        let macros = macros_with_inline_replace();
+        let source = Path::new("Foo.sol");
+        let fmtd = "Error: identifier not found\n --> Foo.sol:3:10:\n  |\n3 | contract Foo {\n  |          ^^^\n";
+
+        let primary = super::parse_primary_location(source, fmtd).expect("should parse location");
+        let out = super::remap_fmt_msg(&macros, source, fmtd, primary);
+        assert!(
+            out.contains(" --> Foo.sol:3:9:"),
+            "expected column remapped from 10 to 9, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_old_style_column_is_remapped() {
+        use std::path::Path;
+
+        let macros = macros_with_inline_replace();
+        let source = Path::new("Foo.sol");
+        let fmtd = "Foo.sol:3:10: Error: identifier not found";
+
+        let primary = super::parse_primary_location(source, fmtd).expect("should parse location");
+        let out = super::remap_fmt_msg(&macros, source, fmtd, primary);
+        assert!(
+            out.contains("Foo.sol:3:9: Error: identifier not found"),
+            "expected column remapped from 10 to 9, got:\n{out}"
         );
     }
 }
