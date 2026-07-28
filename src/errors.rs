@@ -249,8 +249,85 @@ mod tests {
     }
     "#;
 
+    /// Source whose one-line function body is replaced by the `replace_body` macro with a
+    /// multi-line block that introduces a type error. The `// #[replace_body]` trigger sits on
+    /// line 4 (col 9) and the body to replace is on line 5.
+    const TEST_SOURCE_REPLACE: &str = r#"
+    pragma solidity ^0.8.30;
+    library Foo {
+        // #[replace_body]
+        function original() internal pure returns (uint256) { return 1; }
+    }
+    "#;
+
+    /// Source in which the `remove_block` macro deletes the `// #[remove_me]` comment and the
+    /// entire `toRemove()` function (lines 4-7). The type error is in `broken()` on original
+    /// line 9, which the removal shifts up to expanded line 5; error reporting must remap it back.
+    const TEST_SOURCE_REMOVE: &str = r#"
+    pragma solidity ^0.8.30;
+    library Foo {
+        // #[remove_me]
+        function toRemove() internal pure returns (uint256) {
+            return 1;
+        }
+        uint256 constant KEEP = 7;
+        function broken() internal pure returns (uint256) { return "bad"; }
+    }
+    "#;
+
     fn make_macro(fail: bool) -> Macro {
         if fail { insert_foo_fail } else { insert_foo }
+    }
+
+    /// Returns the path of the source file that declares `library Foo`, if present.
+    fn foo_source_path(data: &PreprocessingData<'_>) -> Option<std::path::PathBuf> {
+        data.input
+            .iter()
+            .find(|(_, s)| s.content.as_str().contains("library Foo"))
+            .map(|(p, _)| p.clone())
+    }
+
+    /// Replaces `original()`'s one-line body `{ return 1; }` with a multi-line block whose body
+    /// returns a string literal (a `uint256` type error). Because the replacement spans more
+    /// lines than it removes, the error lands *inside* the macro-generated span and must be
+    /// attributed to the macro rather than remapped to original source.
+    fn replace_body(
+        _ctx: &Gcx,
+        data: &mut PreprocessingData<'_>,
+    ) -> foundry_compilers::error::Result<()> {
+        const BODY: &str = "{ return 1; }";
+        let Some(path) = foo_source_path(data) else { return Ok(()) };
+        let (range, loc) = {
+            let content = data.input.get(&path).unwrap().content.as_str();
+            let Some(start) = content.find(BODY) else { return Ok(()) };
+            let trigger = content.find("// #[replace_body]").unwrap_or(start);
+            let before = &content[..trigger];
+            let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
+            let col = trigger - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            let loc = MacroOriginalLocation { file: path.clone(), line, col };
+            (start..start + BODY.len(), loc)
+        };
+        let replacement = "{\n        return \"bad\";\n    }";
+        data.entry(&path, replacement).with("replace_body", Some(loc)).replace(range);
+        Ok(())
+    }
+
+    /// Removes the `// #[remove_me]` comment and the whole `toRemove()` function, deleting four
+    /// lines and shifting everything below it up. Used to exercise line-number remapping of a
+    /// compiler error that lives in surviving original source below a removal.
+    fn remove_block(
+        _ctx: &Gcx,
+        data: &mut PreprocessingData<'_>,
+    ) -> foundry_compilers::error::Result<()> {
+        let Some(path) = foo_source_path(data) else { return Ok(()) };
+        let range = {
+            let content = data.input.get(&path).unwrap().content.as_str();
+            let Some(start) = content.find("        // #[remove_me]") else { return Ok(()) };
+            let Some(end) = content.find("        uint256 constant KEEP") else { return Ok(()) };
+            start..end
+        };
+        data.entry(&path, "").with("remove_block", None).replace(range);
+        Ok(())
     }
 
     fn insert_foo(
@@ -308,6 +385,12 @@ mod tests {
     }
 
     fn compile_with_macro(source: &str, fail: bool) -> eyre::Result<()> {
+        compile_source_with(source, make_macro(fail))
+    }
+
+    /// Writes `source` to a throwaway project as `src/Foo.sol`, registers `rule` as the single
+    /// macro, and compiles, returning the compiler result so tests can inspect error messages.
+    fn compile_source_with(source: &str, rule: Macro) -> eyre::Result<()> {
         let dir = tempfile::tempdir()?;
         let src_dir = dir.path().join("src");
         std::fs::create_dir(&src_dir)?;
@@ -318,7 +401,7 @@ mod tests {
         let project = config.project()?;
 
         let mut macros = crate::MacroRules::default();
-        macros.rules.push(make_macro(fail));
+        macros.rules.push(rule);
 
         crate::project_compiler::ProjectCompiler {
             project_root: project.root().to_path_buf(),
@@ -362,6 +445,44 @@ mod tests {
         assert!(
             err.contains("Foo.sol:5:"),
             "expected error remapped to original line 5, got:\n{err}"
+        );
+    }
+
+    #[test]
+    fn test_replace_error_attributed_to_macro() {
+        let err = compile_source_with(TEST_SOURCE_REPLACE, replace_body).unwrap_err().to_string();
+        let err = strip_ansi(&err);
+        // The bad `return "bad";` lives on a line the replacement generated, so the error must be
+        // attributed to the macro instead of being remapped to original source.
+        assert!(
+            err.contains("error in code generated by macro 'replace_body':"),
+            "expected replacement error attributed to macro, got:\n{err}"
+        );
+        // Attribution points back to the `// #[replace_body]` trigger comment at line 4, col 9.
+        assert!(
+            err.contains("Foo.sol:4:9:"),
+            "expected --> line pointing to trigger comment at 4:9, got:\n{err}"
+        );
+    }
+
+    #[test]
+    fn test_removal_remaps_downstream_error_line() {
+        let err = compile_source_with(TEST_SOURCE_REMOVE, remove_block).unwrap_err().to_string();
+        let err = strip_ansi(&err);
+        // The error is in surviving original code, not macro-generated code.
+        assert!(
+            !err.contains("error in code generated by macro"),
+            "removal error was incorrectly attributed to macro:\n{err}"
+        );
+        // `broken()` is on original line 9; the removal deletes four lines above it, so Solc sees
+        // it on expanded line 5. The reported line must be remapped back to the original line 9.
+        assert!(
+            err.contains("Foo.sol:9:"),
+            "expected error remapped to original line 9, got:\n{err}"
+        );
+        assert!(
+            !err.contains("Foo.sol:5:"),
+            "expected expanded line 5 to be remapped away, got:\n{err}"
         );
     }
 }
