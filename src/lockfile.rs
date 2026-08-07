@@ -1,5 +1,11 @@
 // Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
+//
+// Portions of this file are derived from Foundry
+// (https://github.com/foundry-rs/foundry), file
+// `crates/forge/src/lockfile.rs`.
+// Copyright (c) 2021 Georgios Konstantopoulos
+// Licensed under the MIT License.
 
 use std::path::{Path, PathBuf};
 

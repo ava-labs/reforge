@@ -1,6 +1,18 @@
-NIGHTLY := +$(shell cat nightly-toolchain)
+_nightly := $(shell grep -Ex 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' nightly-toolchain)
+$(if $(_nightly),,$(error nightly-toolchain: content does not match nightly-YYYY-MM-DD))
+NIGHTLY := +$(_nightly)
+TAPLO_VERSION := 0.10.0
+CARGO_SORT_VERSION := 2.1.4
+CARGO_DENY_VERSION := 0.20.2
 
 # ── Formatting ───────────────────────────────────────────────────────────────
+
+install-fmt-tools:
+	cargo install taplo-cli --version $(TAPLO_VERSION) --locked
+	cargo install cargo-sort --version $(CARGO_SORT_VERSION) --locked
+
+install-deny:
+	cargo install cargo-deny --version $(CARGO_DENY_VERSION) --locked
 
 fmt:
 	cargo $(NIGHTLY) fmt --all
@@ -11,6 +23,11 @@ fmt-check:
 	cargo $(NIGHTLY) fmt --all -- --check
 	taplo fmt --check
 	cargo sort --workspace --no-format --check
+
+# ── Dependency auditing ───────────────────────────────────────────────────────
+
+deny:
+	cargo deny check
 
 # ── Linting ──────────────────────────────────────────────────────────────────
 
@@ -40,4 +57,4 @@ snapshot:
 clean-artifacts:
 	rm -rf sample_proj/out sample_proj/cache
 
-.PHONY: fmt fmt-check clippy check build test clean-artifacts snapshot coverage
+.PHONY: fmt fmt-check clippy check build test clean-artifacts snapshot coverage install-fmt-tools install-deny deny

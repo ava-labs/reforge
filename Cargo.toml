@@ -2,7 +2,13 @@
 name = "reforge"
 version = "0.1.0"
 edition = "2024"
-authors = ["Jacob Turner"]
+authors = ["Ava Labs, Inc. <contact@avalabs.org>"]
+description = "A forge wrapper that adds Solidity macro preprocessing"
+repository = "https://github.com/ava-labs/reforge"
+homepage = "https://github.com/ava-labs/reforge"
+readme = "README.md"
+keywords = ["solidity", "forge", "foundry", "macros", "evm"]
+categories = ["development-tools", "command-line-utilities"]
 rust-version = "1.91.0"
 license = "MIT"
 

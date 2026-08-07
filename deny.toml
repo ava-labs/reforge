@@ -1,0 +1,56 @@
+[advisories]
+version = 2
+ignore = [
+    # paste: unmaintained (dtolnay archived). Compile-time proc-macro only —
+    # no runtime attack surface. No fix available upstream.
+    { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro, no runtime surface, no fix available" },
+
+    # quick-xml: both advisories are reader-side (quadratic blowup in
+    # BytesStart::attributes and NsReader namespace allocation). reforge only
+    # ever writes XML/SVG — no Reader/NsReader call sites exist in src/.
+    { id = "RUSTSEC-2026-0194", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
+    { id = "RUSTSEC-2026-0195", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
+
+    # rustls-webpki: requires RevocationOptions + attacker-controlled CRLs.
+    # Default rustls config does not enable CRL checking; path is unreachable.
+    { id = "RUSTSEC-2026-0104", reason = "requires RevocationOptions + attacker-controlled CRLs; default config unaffected" },
+
+    # proc-macro-error2: unmaintained. Compile-time proc-macro crate only —
+    # no runtime attack surface. Transitively required by foundry.
+    { id = "RUSTSEC-2026-0173", reason = "compile-time proc-macro, no runtime surface; transitively required by foundry" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "CDDL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "WTFPL",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    # foundry submodule transitive git deps
+    "https://github.com/tempoxyz/tempo",
+    "https://github.com/paradigmxyz/solar",
+]
