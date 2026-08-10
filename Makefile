@@ -4,6 +4,7 @@ NIGHTLY := +$(_nightly)
 TAPLO_VERSION := 0.10.0
 CARGO_SORT_VERSION := 2.1.4
 CARGO_DENY_VERSION := 0.20.2
+OSV_SCANNER_VERSION := 2.3.2
 
 # ── Formatting ───────────────────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ fmt-check:
 
 deny:
 	cargo deny check
+
+osv:
+	osv-scanner --config osv-scanner.toml scan --lockfile Cargo.lock
 
 # ── Linting ──────────────────────────────────────────────────────────────────
 
@@ -57,4 +61,4 @@ snapshot:
 clean-artifacts:
 	rm -rf sample_proj/out sample_proj/cache
 
-.PHONY: fmt fmt-check clippy check build test clean-artifacts snapshot coverage install-fmt-tools install-deny deny
+.PHONY: fmt fmt-check clippy check build test clean-artifacts snapshot coverage install-fmt-tools install-deny deny osv

@@ -21,10 +21,10 @@ Reforge intercepts the Forge build pipeline at the preprocessing stage. Before `
 
 ## Getting started
 
-This repository includes [Foundry](https://github.com/foundry-rs/foundry) as a git submodule (pinned to `v1.6.0-rc1`). After cloning, initialise it before building:
+This repository vendors [Foundry](https://github.com/foundry-rs/foundry) source directly. After cloning, initialise the forge-std submodule used by the sample project before building:
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/ava-labs/reforge
 cd reforge
 git submodule update --init --recursive
 cargo build
@@ -217,6 +217,8 @@ cargo run --example macros -- build --root sample_proj --force
 cargo run --example macros -- test --root sample_proj
 ```
 
+If your tests use `vm.createFork` or other RPC-dependent cheatcodes, set `ETHERSCAN_API_KEY` in the environment before running — the `test` subcommand reads it automatically (equivalent to `--etherscan-api-key`).
+
 **Snapshot:**
 ```sh
 cargo run --example macros -- snapshot --root sample_proj
@@ -280,3 +282,9 @@ Text injected by one macro rule is not re-parsed by Solar, so it is invisible to
 ### Artifacts are only generated for contracts known before preprocessing
 
 Foundry discovers which contracts exist by scanning source files before the preprocessor runs. If a macro injects an entirely new `library` or `contract` declaration into a file, Foundry will compile it without errors but will not write a `.json` artifact for it. The workaround is to pre-declare an empty shell of every contract the macro will populate, so Foundry registers it during its initial scan.
+
+## License
+
+reforge is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Ava Labs, Inc.
+
+This repository includes vendored source from [Foundry](https://github.com/foundry-rs/foundry) (MIT/Apache-2.0, Copyright (c) 2021 Georgios Konstantopoulos) and [forge-std](https://github.com/foundry-rs/forge-std) (MIT/Apache-2.0, Copyright Contributors to Forge Standard Library). See [NOTICE](NOTICE) for details.

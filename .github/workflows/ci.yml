@@ -26,8 +26,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          submodules: recursive
           persist-credentials: false
+
+      - name: Validate .gitmodules URLs and initialise submodules
+        run: |
+          allowed=(
+            "https://github.com/foundry-rs/forge-std"
+          )
+          while IFS= read -r url; do
+            ok=false
+            for a in "${allowed[@]}"; do
+              [[ "$url" == "$a" ]] && ok=true && break
+            done
+            if [[ "$ok" == false ]]; then
+              echo "Disallowed submodule URL: $url" >&2
+              exit 1
+            fi
+          done < <(git config --file .gitmodules --get-all submodule.*.url)
+          git submodule update --init --recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
@@ -111,8 +127,19 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
 
-      - name: Run cargo deny
+      - name: Run cargo deny (RustSec)
         run: make deny
+
+      - name: Install osv-scanner
+        run: |
+          curl -fsSL https://github.com/google/osv-scanner/releases/download/v2.3.2/osv-scanner_linux_amd64 \
+            -o /usr/local/bin/osv-scanner
+          echo "03d800073a330d053047b26ff4484136d866aee4f486e12fb82aa452bd4002ca  /usr/local/bin/osv-scanner" \
+            | sha256sum -c
+          chmod +x /usr/local/bin/osv-scanner
+
+      - name: Run osv-scanner (OSV.dev)
+        run: make osv
 
   fmt:
     name: Formatting

@@ -1,0 +1,31 @@
+title = "reforge"
+
+[extend]
+# Inherit the full default ruleset; rules below only add allowlists.
+useDefault = true
+
+[allowlist]
+description = "EVM false-positive suppressions"
+
+regexes = [
+    # Ethereum addresses are 20 bytes (40 hex chars) — structurally impossible
+    # to be a 32-byte private key, so safe to allowlist by length alone.
+    '''(?i)\b0x[0-9a-fA-F]{40}\b''',
+
+    # 4-byte function selectors and short ABI fragments (≤ 8 hex chars).
+    '''(?i)\b0x[0-9a-fA-F]{1,8}\b''',
+
+    # NOTE: 0x[0-9a-fA-F]{64} (32-byte values) is intentionally NOT
+    # allowlisted here. That pattern matches both keccak256 hashes / encoded
+    # uint256 values (false positives) AND 32-byte private keys (true
+    # positives). Suppressing it by regex would silently hide real key leaks.
+    # If a specific known-safe 64-hex constant generates a false positive,
+    # suppress it at the path or stopwords level rather than by pattern.
+]
+
+paths = [
+    # Vendored upstream source — third-party code already public on GitHub.
+    # Any "secrets" here are well-known test keys (e.g. Anvil defaults)
+    # that are intentionally insecure and carry no real-world value.
+    '''foundry/''',
+]

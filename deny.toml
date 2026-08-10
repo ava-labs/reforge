@@ -22,6 +22,7 @@ ignore = [
 
 [licenses]
 version = 2
+confidence-threshold = 0.8
 allow = [
     "0BSD",
     "Apache-2.0",

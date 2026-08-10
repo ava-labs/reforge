@@ -1,0 +1,25 @@
+reforge
+Copyright (c) 2026 Ava Labs, Inc.
+Licensed under the MIT License. See LICENSE.
+
+-------------------------------------------------------------------------------
+
+This repository includes vendored source code from the Foundry project,
+located in the foundry/ directory.
+
+Foundry
+Copyright (c) 2021 Georgios Konstantopoulos
+Licensed under the MIT License and the Apache License, Version 2.0.
+See foundry/LICENSE-MIT and foundry/LICENSE-APACHE.
+Source: https://github.com/foundry-rs/foundry
+
+-------------------------------------------------------------------------------
+
+This repository includes forge-std as a git submodule,
+located in the sample_proj/lib/forge-std/ directory.
+
+forge-std
+Copyright Contributors to Forge Standard Library
+Licensed under the MIT License and the Apache License, Version 2.0.
+See sample_proj/lib/forge-std/LICENSE-MIT and sample_proj/lib/forge-std/LICENSE-APACHE.
+Source: https://github.com/foundry-rs/forge-std
