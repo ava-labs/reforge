@@ -31,7 +31,7 @@ deny:
 	cargo deny check
 
 osv:
-	osv-scanner --config osv-scanner.toml scan --lockfile Cargo.lock
+	osv-scanner scan --config osv-scanner.toml --lockfile Cargo.lock
 
 # ── Linting ──────────────────────────────────────────────────────────────────
 

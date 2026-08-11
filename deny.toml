@@ -18,6 +18,24 @@ ignore = [
     # proc-macro-error2: unmaintained. Compile-time proc-macro crate only —
     # no runtime attack surface. Transitively required by foundry.
     { id = "RUSTSEC-2026-0173", reason = "compile-time proc-macro, no runtime surface; transitively required by foundry" },
+
+    # derivative: proc-macro soundness issue. Compile-time only; locked by
+    # foundry dev dep; not present in reforge's compiled dependency graph.
+    { id = "RUSTSEC-2024-0388", reason = "compile-time proc-macro; locked by foundry dev dep; not in reforge's compiled graph" },
+
+    # git2: libgit2 CVEs. Locked by vergen-git2 in foundry-common (build dep
+    # only — embeds git metadata at compile time; not a runtime dependency).
+    { id = "RUSTSEC-2026-0183", reason = "libgit2 CVE; locked by vergen-git2 build dep in foundry-common; build-time only" },
+    { id = "RUSTSEC-2026-0184", reason = "libgit2 CVE; locked by vergen-git2 build dep in foundry-common; build-time only" },
+
+    # jsonwebtoken: JWT algorithm confusion (CVSS 5.5). Locked by
+    # alloy-rpc-types-engine ^9.3.0; reforge does not call Engine API auth paths.
+    { id = "GHSA-h395-gr6q-cpjc", reason = "JWT algorithm confusion; locked by alloy-rpc-types-engine ^9.3.0; reforge does not use Engine API auth" },
+
+    # tracing-subscriber 0.2.x: CVSS 2.3 low. Fix requires breaking 0.3.x
+    # upgrade; locked by foundry transitive dep; not in reforge's compiled graph.
+    { id = "RUSTSEC-2025-0055", reason = "CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade; locked by foundry; not in reforge's compiled graph" },
+    { id = "GHSA-xwfj-jgwm-7wp5", reason = "alias for RUSTSEC-2025-0055; same rationale applies" },
 ]
 
 [licenses]

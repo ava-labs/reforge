@@ -15,6 +15,16 @@ ignore = [
 
     # proc-macro-error2: unmaintained. Compile-time proc-macro only.
     "RUSTSEC-2026-0173",
+
+    # derivative: proc-macro soundness issue; compile-time only; locked by foundry dev dep.
+    "RUSTSEC-2024-0388",
+
+    # git2: libgit2 CVEs; locked by vergen-git2 build dep in foundry-common.
+    "RUSTSEC-2026-0183",
+    "RUSTSEC-2026-0184",
+
+    # tracing-subscriber 0.2.x: CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade.
+    "RUSTSEC-2025-0055",
 ]
 
 [output]

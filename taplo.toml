@@ -1,1 +1,8 @@
-exclude = ["foundry/**", "sample_proj/**"]
+exclude = [
+  "foundry/**",
+  "sample_proj/**",
+  "deny.toml",
+  "audit.toml",
+  "osv-scanner.toml",
+  ".gitleaks.toml",
+]
