@@ -32,6 +32,7 @@ jobs:
         run: |
           allowed=(
             "https://github.com/foundry-rs/forge-std"
+            "https://github.com/foundry-rs/foundry"
           )
           while IFS= read -r url; do
             ok=false
@@ -87,6 +88,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate .gitmodules URLs and initialise submodules
+        run: |
+          allowed=(
+            "https://github.com/foundry-rs/forge-std"
+            "https://github.com/foundry-rs/foundry"
+          )
+          while IFS= read -r url; do
+            ok=false
+            for a in "${allowed[@]}"; do
+              [[ "$url" == "$a" ]] && ok=true && break
+            done
+            if [[ "$ok" == false ]]; then
+              echo "Disallowed submodule URL: $url" >&2
+              exit 1
+            fi
+          done < <(git config --file .gitmodules --get-all submodule.*.url)
+          git submodule update --init --recursive
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
@@ -124,6 +143,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate .gitmodules URLs and initialise submodules
+        run: |
+          allowed=(
+            "https://github.com/foundry-rs/forge-std"
+            "https://github.com/foundry-rs/foundry"
+          )
+          while IFS= read -r url; do
+            ok=false
+            for a in "${allowed[@]}"; do
+              [[ "$url" == "$a" ]] && ok=true && break
+            done
+            if [[ "$ok" == false ]]; then
+              echo "Disallowed submodule URL: $url" >&2
+              exit 1
+            fi
+          done < <(git config --file .gitmodules --get-all submodule.*.url)
+          git submodule update --init --recursive
+
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
 
@@ -148,6 +185,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
+      - name: Validate .gitmodules URLs and initialise submodules
+        run: |
+          allowed=(
+            "https://github.com/foundry-rs/forge-std"
+            "https://github.com/foundry-rs/foundry"
+          )
+          while IFS= read -r url; do
+            ok=false
+            for a in "${allowed[@]}"; do
+              [[ "$url" == "$a" ]] && ok=true && break
+            done
+            if [[ "$ok" == false ]]; then
+              echo "Disallowed submodule URL: $url" >&2
+              exit 1
+            fi
+          done < <(git config --file .gitmodules --get-all submodule.*.url)
+          git submodule update --init --recursive
 
       - name: Read nightly toolchain version
         id: nightly
