@@ -9,6 +9,12 @@ on:
   pull_request:
     branches:
       - "dependabot/**"
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
 jobs:
   semgrep:
     name: semgrep/ci
@@ -21,9 +27,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - run: semgrep ci --dry-run --sarif > semgrep.sarif
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN_PUB }}
+      - run: semgrep scan --config auto --sarif-output semgrep.sarif
 
       - name: Upload SARIF file for GitHub Advanced Security Dashboard
         uses: github/codeql-action/upload-sarif@24c7eb380a2dc368f2d129e4c65e51d172983a1e
