@@ -287,4 +287,6 @@ Foundry discovers which contracts exist by scanning source files before the prep
 
 reforge is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Ava Labs, Inc.
 
-This repository includes vendored source from [Foundry](https://github.com/foundry-rs/foundry) (MIT/Apache-2.0, Copyright (c) 2021 Georgios Konstantopoulos) and [forge-std](https://github.com/foundry-rs/forge-std) (MIT/Apache-2.0, Copyright Contributors to Forge Standard Library). See [NOTICE](NOTICE) for details.
+Built on [Foundry](https://github.com/foundry-rs/foundry) and [Solar](https://github.com/paradigmxyz/solar) — reforge vendors Foundry source directly and uses Solar for full semantic analysis of Solidity.
+
+This repository includes vendored source from [Foundry](https://github.com/foundry-rs/foundry) (MIT/Apache-2.0, Copyright (c) 2021 Georgios Konstantopoulos) and [forge-std](https://github.com/foundry-rs/forge-std) (MIT/Apache-2.0, Copyright Contributors to Forge Standard Library). See [NOTICE](NOTICE) for full attribution.

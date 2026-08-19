@@ -23,3 +23,68 @@ Copyright Contributors to Forge Standard Library
 Licensed under the MIT License and the Apache License, Version 2.0.
 See sample_proj/lib/forge-std/LICENSE-MIT and sample_proj/lib/forge-std/LICENSE-APACHE.
 Source: https://github.com/foundry-rs/forge-std
+
+-------------------------------------------------------------------------------
+
+This project depends on Solar crates (solar-ast, solar-compiler, solar-config,
+solar-data-structures, solar-interface, solar-macros, solar-parse, solar-sema)
+sourced from the Solar Solidity compiler.
+
+Solar
+Copyright Contributors to Solar
+Licensed under the MIT License and the Apache License, Version 2.0.
+Source: https://github.com/paradigmxyz/solar (rev 530f129)
+
+-------------------------------------------------------------------------------
+
+This project depends on reth crates (reth-codecs, reth-codecs-derive,
+reth-ethereum-primitives, reth-primitives-traits, reth-zstd-compressors)
+sourced from the Reth Ethereum execution client.
+
+Reth
+Copyright Contributors to Reth
+Licensed under the MIT License and the Apache License, Version 2.0.
+Source: https://github.com/paradigmxyz/reth (rev b25f32a977b489f9b84254c7811a2a5a25a81369)
+
+-------------------------------------------------------------------------------
+
+This project depends on tempo-primitives sourced from the Tempo project.
+
+Tempo
+Copyright Contributors to Tempo
+Licensed under the MIT License and the Apache License, Version 2.0.
+Source: https://github.com/tempoxyz/tempo (tag v1.0.0)
+
+-------------------------------------------------------------------------------
+
+The following dependency is licensed under the Creative Commons
+Attribution 4.0 International License (CC-BY-4.0):
+
+  font-awesome-as-a-crate v0.3.0
+    Bundles Font Awesome icons; icons copyright Fonticons, Inc.
+    Source: https://crates.io/crates/font-awesome-as-a-crate
+
+-------------------------------------------------------------------------------
+
+The following dependencies are licensed under the Mozilla Public License 2.0
+(MPL-2.0). As required by the MPL-2.0, source code for each component is
+available at the link provided.
+
+  mdbook-core v0.5.2          https://github.com/rust-lang/mdBook
+  mdbook-driver v0.5.2        https://github.com/rust-lang/mdBook
+  mdbook-html v0.5.2          https://github.com/rust-lang/mdBook
+  mdbook-markdown v0.5.2      https://github.com/rust-lang/mdBook
+  mdbook-preprocessor v0.5.2  https://github.com/rust-lang/mdBook
+  mdbook-renderer v0.5.2      https://github.com/rust-lang/mdBook
+  mdbook-summary v0.5.2       https://github.com/rust-lang/mdBook
+  option-ext v0.2.0           https://crates.io/crates/option-ext
+  fastrlp v0.3.1              https://crates.io/crates/fastrlp
+  fastrlp v0.4.0              https://crates.io/crates/fastrlp
+
+-------------------------------------------------------------------------------
+
+The following dependency is licensed under the Common Development and
+Distribution License 1.0 (CDDL-1.0). Source code is available at the link
+provided.
+
+  inferno v0.12.6  https://github.com/jonhoo/inferno
