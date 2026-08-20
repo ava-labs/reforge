@@ -1,5 +1,11 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
+//
+// Portions of this file are derived from Foundry
+// (https://github.com/foundry-rs/foundry), file
+// `crates/common/src/compile.rs`.
+// Copyright (c) 2021 Georgios Konstantopoulos
+// Licensed under the MIT License.
 
 use std::{collections::BTreeMap, path::PathBuf, time::Instant};
 
