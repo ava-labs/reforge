@@ -1,0 +1,75 @@
+[advisories]
+version = 2
+ignore = [
+    # paste: unmaintained (dtolnay archived). Compile-time proc-macro only —
+    # no runtime attack surface. No fix available upstream.
+    { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro, no runtime surface, no fix available" },
+
+    # quick-xml: both advisories are reader-side (quadratic blowup in
+    # BytesStart::attributes and NsReader namespace allocation). reforge only
+    # ever writes XML/SVG — no Reader/NsReader call sites exist in src/.
+    { id = "RUSTSEC-2026-0194", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
+    { id = "RUSTSEC-2026-0195", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
+
+    # rustls-webpki: requires RevocationOptions + attacker-controlled CRLs.
+    # Default rustls config does not enable CRL checking; path is unreachable.
+    { id = "RUSTSEC-2026-0104", reason = "requires RevocationOptions + attacker-controlled CRLs; default config unaffected" },
+
+    # proc-macro-error2: unmaintained. Compile-time proc-macro crate only —
+    # no runtime attack surface. Transitively required by foundry.
+    { id = "RUSTSEC-2026-0173", reason = "compile-time proc-macro, no runtime surface; transitively required by foundry" },
+
+    # derivative: proc-macro soundness issue. Compile-time only; locked by
+    # foundry dev dep; not present in reforge's compiled dependency graph.
+    { id = "RUSTSEC-2024-0388", reason = "compile-time proc-macro; locked by foundry dev dep; not in reforge's compiled graph" },
+
+    # git2: libgit2 CVEs. Locked by vergen-git2 in foundry-common (build dep
+    # only — embeds git metadata at compile time; not a runtime dependency).
+    { id = "RUSTSEC-2026-0183", reason = "libgit2 CVE; locked by vergen-git2 build dep in foundry-common; build-time only" },
+    { id = "RUSTSEC-2026-0184", reason = "libgit2 CVE; locked by vergen-git2 build dep in foundry-common; build-time only" },
+
+    # jsonwebtoken: JWT algorithm confusion (CVSS 5.5). Locked by
+    # alloy-rpc-types-engine ^9.3.0; reforge does not call Engine API auth paths.
+    { id = "GHSA-h395-gr6q-cpjc", reason = "JWT algorithm confusion; locked by alloy-rpc-types-engine ^9.3.0; reforge does not use Engine API auth" },
+
+    # tracing-subscriber 0.2.x: CVSS 2.3 low. Fix requires breaking 0.3.x
+    # upgrade; locked by foundry transitive dep; not in reforge's compiled graph.
+    { id = "RUSTSEC-2025-0055", reason = "CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade; locked by foundry; not in reforge's compiled graph" },
+    { id = "GHSA-xwfj-jgwm-7wp5", reason = "alias for RUSTSEC-2025-0055; same rationale applies" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "CDDL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "WTFPL",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    # foundry submodule transitive git deps
+    "https://github.com/tempoxyz/tempo",
+    "https://github.com/paradigmxyz/solar",
+]

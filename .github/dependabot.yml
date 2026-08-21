@@ -1,0 +1,29 @@
+# Copyright (C) 2026, Ava Labs, Inc.
+# See the file LICENSE for licensing terms.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      weekly-ava-updates:
+        patterns:
+          - "ava-labs/*"
+      weekly-ext-updates:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      weekly-github-actions:
+        patterns:
+          - "*"

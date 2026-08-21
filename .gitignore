@@ -1,7 +1,22 @@
 /target
 /.idea
-/.claude
+.claude/
 /cache
 /out
 /sample_proj/cache
 /sample_proj/out
+
+# Credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+
+# OS
+.DS_Store

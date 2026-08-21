@@ -1,4 +1,4 @@
-// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
 pragma solidity 0.8.30;
