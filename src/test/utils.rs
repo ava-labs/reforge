@@ -60,18 +60,20 @@ impl TestSummaryReport {
                 let passed = suite.successes().count();
                 let failed = suite.failures().count();
                 let skipped = suite.skips().count();
-                let mut result = serde_json::json!({
-                    "suite": suite_name,
-                    "passed": passed,
-                    "failed": failed,
-                    "skipped": skipped,
-                });
+                let mut result = serde_json::Map::from_iter([
+                    ("suite".to_string(), serde_json::Value::from(suite_name)),
+                    ("passed".to_string(), serde_json::Value::from(passed)),
+                    ("failed".to_string(), serde_json::Value::from(failed)),
+                    ("skipped".to_string(), serde_json::Value::from(skipped)),
+                ]);
                 if *is_detailed {
-                    result["file_path"] = serde_json::Value::String(suite_path.to_string());
-                    result["duration"] =
-                        serde_json::Value::String(format!("{:.2?}", suite.duration));
+                    result.insert("file_path".to_string(), serde_json::Value::from(suite_path));
+                    result.insert(
+                        "duration".to_string(),
+                        serde_json::Value::from(format!("{:.2?}", suite.duration)),
+                    );
                 }
-                result
+                serde_json::Value::Object(result)
             }).collect::<Vec<serde_json::Value>>(),
         });
         serde_json::to_string_pretty(&output).unwrap()

@@ -276,14 +276,14 @@ mod tests {
     #[test]
     fn test_record() {
         let adj = setup();
-        assert_eq!(adj.len(), 2);
-        let (path, adjustment) = &adj[0];
+        let [(path, adjustment), (path2, adj2)] = adj.as_slice() else {
+            panic!("expected 2 adjustments, got {}", adj.len());
+        };
         assert_eq!(path, Path::new("foo.sol"));
         assert_eq!(adjustment.original_offset, 16);
         assert_eq!(adjustment.original_line, 2);
         assert_eq!(adjustment.delta_offset, 28);
         assert_eq!(adjustment.delta_line, 3);
-        let (path2, adj2) = &adj[1];
         assert_eq!(path2, Path::new("foo.sol"));
         assert_eq!(adj2.original_offset, 16);
         assert_eq!(adj2.original_line, 2);
@@ -317,8 +317,9 @@ mod tests {
         let (offset, _) = adj.record(Path::new("foo.sol"), 15, src, added, removed);
         assert_eq!(offset, 15);
 
-        assert_eq!(adj.len(), 1);
-        let (path, adjustment) = &adj[0];
+        let [(path, adjustment)] = adj.as_slice() else {
+            panic!("expected 1 adjustment, got {}", adj.len());
+        };
         assert_eq!(path, Path::new("foo.sol"));
         assert_eq!(adjustment.original_offset, 15);
         assert_eq!(adjustment.original_line, 2);
