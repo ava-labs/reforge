@@ -471,15 +471,17 @@ mod tests {
     fn test_record() {
         let adj = setup();
         let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
-        assert_eq!(adjs.len(), 2);
-        assert_eq!(adjs[0].original_offset.get(), 16);
-        assert_eq!(adjs[0].original_line, 2);
-        assert_eq!(adjs[0].delta_offset, 28);
-        assert_eq!(adjs[0].delta_line, 3);
-        assert_eq!(adjs[1].original_offset.get(), 16);
-        assert_eq!(adjs[1].original_line, 2);
-        assert_eq!(adjs[1].delta_offset, 33);
-        assert_eq!(adjs[1].delta_line, 3);
+        let [first, second] = adjs.as_slice() else {
+            panic!("expected 2 adjustments, got {}", adjs.len());
+        };
+        assert_eq!(first.original_offset.get(), 16);
+        assert_eq!(first.original_line, 2);
+        assert_eq!(first.delta_offset, 28);
+        assert_eq!(first.delta_line, 3);
+        assert_eq!(second.original_offset.get(), 16);
+        assert_eq!(second.original_line, 2);
+        assert_eq!(second.delta_offset, 33);
+        assert_eq!(second.delta_line, 3);
     }
 
     #[test]
@@ -525,11 +527,13 @@ mod tests {
         assert_eq!(offset.get(), 15);
 
         let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
-        assert_eq!(adjs.len(), 1);
-        assert_eq!(adjs[0].original_offset.get(), 15);
-        assert_eq!(adjs[0].original_line, 2);
-        assert_eq!(adjs[0].delta_offset, -18); // 8 - 26
-        assert_eq!(adjs[0].delta_line, -1); // 1 - 2 newlines
+        let [only] = adjs.as_slice() else {
+            panic!("expected 1 adjustment, got {}", adjs.len());
+        };
+        assert_eq!(only.original_offset.get(), 15);
+        assert_eq!(only.original_line, 2);
+        assert_eq!(only.delta_offset, -18); // 8 - 26
+        assert_eq!(only.delta_line, -1); // 1 - 2 newlines
 
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
