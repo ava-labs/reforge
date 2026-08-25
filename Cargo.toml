@@ -47,6 +47,9 @@ yansi = "1.0"
 [dev-dependencies]
 tempfile = "3"
 
+[lints.clippy]
+all = "warn"
+
 [patch.crates-io]
 ## solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
