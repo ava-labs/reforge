@@ -48,6 +48,7 @@ yansi = "1.0"
 tempfile = "3"
 
 [lints.clippy]
+all = "warn"
 arithmetic_side_effects = "deny"
 as_conversions = "deny"
 
