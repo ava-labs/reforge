@@ -295,12 +295,11 @@ pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
 
 /// Generate test report in JUnit XML report format.
 pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
-    let mut total_duration = Duration::default();
+    let total_duration: Duration = results.values().map(|suite| suite.duration).sum();
     let mut junit_report = Report::new("Test run");
     junit_report.set_timestamp(Utc::now());
     for (suite_name, suite_result) in results {
         let mut test_suite = TestSuite::new(suite_name);
-        total_duration += suite_result.duration;
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {

@@ -239,12 +239,9 @@ fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
         BytecodeObject::Unlinked(unlinked) => {
             // we don't need to account for placeholders here, because library placeholders take up
             // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
-            let mut size = unlinked.len();
-            if unlinked.starts_with("0x") {
-                size -= 2;
-            }
+            let hex = unlinked.strip_prefix("0x").unwrap_or(unlinked);
             // hex -> bytes
-            size / 2
+            hex.len() / 2
         }
     };
 

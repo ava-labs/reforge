@@ -218,7 +218,8 @@ impl GasSnapshotDiff {
     /// `> 0` if the source used more gas
     /// `< 0` if the target used more gas
     fn gas_change(&self) -> i128 {
-        self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
+        i128::from(self.source_gas_used.gas())
+            .saturating_sub(i128::from(self.target_gas_used.gas()))
     }
 
     /// Determines the percentage change
@@ -356,11 +357,11 @@ fn diff(
         }
     }
 
-    let mut increased = 0;
-    let mut decreased = 0;
-    let mut unchanged = 0;
-    let mut overall_gas_change = 0i128;
-    let mut overall_gas_used = 0i128;
+    let increased = diffs.iter().filter(|d| d.gas_change() > 0).count();
+    let decreased = diffs.iter().filter(|d| d.gas_change() < 0).count();
+    let unchanged = diffs.iter().filter(|d| d.gas_change() == 0).count();
+    let overall_gas_change: i128 = diffs.iter().map(GasSnapshotDiff::gas_change).sum();
+    let overall_gas_used: i128 = diffs.iter().map(|d| i128::from(d.target_gas_used.gas())).sum();
 
     // Sort based on user preference
     match sort_order {
@@ -384,18 +385,7 @@ fn diff(
 
     for diff in &diffs {
         let gas_change = diff.gas_change();
-        overall_gas_change += gas_change;
-        overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-
-        // Classify changes
-        if gas_change > 0 {
-            increased += 1;
-        } else if gas_change < 0 {
-            decreased += 1;
-        } else {
-            unchanged += 1;
-        }
 
         // Display with icon and before/after values
         let icon = if gas_change > 0 {

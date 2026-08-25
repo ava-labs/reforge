@@ -39,7 +39,9 @@ use foundry_compilers::{
 };
 use solar::sema::Gcx;
 
-pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation};
+pub use crate::span_utils::{
+    AdjustmentEntry, EditInfo, MacroOriginalLocation, file_offset, line_col_at,
+};
 use crate::{span_utils::OffsetAdjustment, test::TestArgs};
 
 #[derive(Parser)]
@@ -359,10 +361,10 @@ pub fn get_comment(
     let source = ctx.sources.get(source_id)?;
     let path = source.file.name.as_real()?;
     let source_text = data.input.get(path)?.content.as_str();
-    let original_offset = (span.lo().0 - source.file.start_pos.0) as usize;
+    let original_offset = file_offset(span.lo().0, source.file.start_pos.0);
     let adjusted = data.adjusted_offset(path, original_offset);
     // Walk back to the start of the line
-    let line_start = source_text[..adjusted].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_start = source_text[..adjusted].rfind('\n').map_or(0, |i| i.saturating_add(1));
     let before = &source_text[..line_start];
     let mut comment_block = String::new();
     let mut in_block_comment = false;

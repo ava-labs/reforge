@@ -193,9 +193,9 @@ fn remap_framed_line(macros: &MacroRules, source: &Path, line: &str) -> String {
 ///
 /// Falls back to `short_msg` alone if the source line cannot be read.
 fn format_macro_fmt_msg(orig: &MacroOriginalLocation, short_msg: &str) -> String {
-    let source_line = std::fs::read_to_string(&orig.file)
-        .ok()
-        .and_then(|content| content.lines().nth(orig.line - 1).map(|l| l.to_string()));
+    let source_line = std::fs::read_to_string(&orig.file).ok().and_then(|content| {
+        content.lines().nth(orig.line.saturating_sub(1)).map(ToString::to_string)
+    });
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);
     let width = orig.line.to_string().len();
     let sep = format!("{:width$} |", "");
@@ -212,7 +212,10 @@ fn format_macro_fmt_msg(orig: &MacroOriginalLocation, short_msg: &str) -> String
 mod tests {
     use solar::sema::{Gcx, hir::ContractKind};
 
-    use crate::{Macro, MacroOriginalLocation, PreprocessingData};
+    use crate::{
+        Macro, MacroOriginalLocation, PreprocessingData,
+        span_utils::{file_offset, line_col_at},
+    };
 
     /// Strips ANSI escape sequences from `s` so assertions can match plain text.
     fn strip_ansi(s: &str) -> String {
@@ -301,11 +304,9 @@ mod tests {
             let content = data.input.get(&path).unwrap().content.as_str();
             let Some(start) = content.find(BODY) else { return Ok(()) };
             let trigger = content.find("// #[replace_body]").unwrap_or(start);
-            let before = &content[..trigger];
-            let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-            let col = trigger - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            let (line, col) = line_col_at(content, trigger);
             let loc = MacroOriginalLocation { file: path.clone(), line, col };
-            (start..start + BODY.len(), loc)
+            (start..start.saturating_add(BODY.len()), loc)
         };
         let replacement = "{\n        return \"bad\";\n    }";
         data.entry(&path, replacement).with("replace_body", Some(loc)).replace(range);
@@ -360,18 +361,16 @@ mod tests {
                 continue;
             }
 
-            let start = (contract.span.lo().0 - source.file.start_pos.0) as usize;
+            let start = file_offset(contract.span.lo().0, source.file.start_pos.0);
             let (after_open_brace, original_loc) = {
                 let content = data.input.get(path).unwrap().content.as_str();
                 let Some(rel) = content[start..].find('{') else { continue };
                 // Use the trigger comment as the attribution location, falling back to the
                 // library declaration if the comment is not found.
                 let trigger_offset = content.find("// #[insert_foo]").unwrap_or(start);
-                let before = &content[..trigger_offset];
-                let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-                let col = trigger_offset - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+                let (line, col) = line_col_at(content, trigger_offset);
                 let loc = MacroOriginalLocation { file: path.to_path_buf(), line, col };
-                (start + rel + 1, loc)
+                (start.saturating_add(rel).saturating_add(1), loc)
             };
 
             let func = if fail {

@@ -9,6 +9,56 @@ use std::{
 
 use foundry_compilers::artifacts::Sources;
 
+/// Byte offset of the source-map position `pos` within the file that starts at `file_start`.
+///
+/// Solar spans carry positions in a *global* source map, so the offset within an individual
+/// file is the difference between the two.
+#[must_use]
+pub fn file_offset(pos: u32, file_start: u32) -> usize {
+    usize::try_from(pos.saturating_sub(file_start)).unwrap_or(usize::MAX)
+}
+
+/// 1-based line and column of byte offset `end` within `text`.
+///
+/// Both are computed from the prefix ending at `end`, without slicing, so an offset past the
+/// end of `text` or off a character boundary cannot panic.
+#[must_use]
+pub fn line_col_at(text: &str, end: usize) -> (usize, usize) {
+    let line = newlines_before(text, end).saturating_add(1);
+    let line_start =
+        text.bytes().take(end).rposition(|b| b == b'\n').map_or(0, |i| i.saturating_add(1));
+    let col = end.saturating_sub(line_start).saturating_add(1);
+    (line, col)
+}
+
+/// Counts the newlines in `text`.
+fn newlines(text: &str) -> usize {
+    text.bytes().filter(|&b| b == b'\n').count()
+}
+
+/// Counts the newlines in the first `end` bytes of `text`.
+///
+/// Takes a prefix of the byte iterator rather than slicing, so an `end` that is past the end of
+/// `text` or not on a character boundary cannot panic.
+fn newlines_before(text: &str, end: usize) -> usize {
+    text.bytes().take(end).filter(|&b| b == b'\n').count()
+}
+
+/// Widens a `usize` to `isize`, saturating rather than wrapping.
+fn to_isize(value: usize) -> isize {
+    isize::try_from(value).unwrap_or(isize::MAX)
+}
+
+/// Narrows a signed 1-based line number back to `usize`, clamping to the first line.
+fn to_line(value: isize) -> usize {
+    usize::try_from(value.max(1)).unwrap_or(1)
+}
+
+/// Computes `lhs - rhs` as a signed delta, saturating rather than wrapping.
+fn signed_delta(lhs: usize, rhs: usize) -> isize {
+    to_isize(lhs).saturating_sub(to_isize(rhs))
+}
+
 /// An original source location to which a macro-generated span can be attributed.
 #[derive(Debug, Clone)]
 pub struct MacroOriginalLocation {
@@ -153,7 +203,7 @@ impl OffsetAdjustment {
             .filter(|(p, a)| p == path && a.original_offset <= edit_offset)
             .map(|(_, a)| a.delta_offset)
             .sum();
-        (edit_offset as isize + delta) as usize
+        edit_offset.saturating_add_signed(delta)
     }
 
     /// Records an edit in `path` at `original_offset` in the original source and returns the
@@ -174,17 +224,15 @@ impl OffsetAdjustment {
         removed: &str,
     ) -> (usize, EditInfo) {
         let adjusted_offset = self.adjusted_offset(path, original_offset);
-        let current_line =
-            source[..adjusted_offset].bytes().filter(|&b| b == b'\n').count() as isize + 1;
+        let current_line = to_isize(newlines_before(source, adjusted_offset)).saturating_add(1);
         let accumulated_line_delta: isize = self
             .iter()
             .filter(|(p, a)| p.as_path() == path && a.original_offset <= original_offset)
             .map(|(_, a)| a.delta_line)
             .sum();
-        let original_line = (current_line - accumulated_line_delta) as usize;
-        let delta_offset = added.len() as isize - removed.len() as isize;
-        let delta_line = added.bytes().filter(|&b| b == b'\n').count() as isize
-            - removed.bytes().filter(|&b| b == b'\n').count() as isize;
+        let original_line = to_line(current_line.saturating_sub(accumulated_line_delta));
+        let delta_offset = signed_delta(added.len(), removed.len());
+        let delta_line = signed_delta(newlines(added), newlines(removed));
         self.push((
             path.to_path_buf(),
             Adjustment {
@@ -211,12 +259,12 @@ impl OffsetAdjustment {
     pub fn get_original_line(&self, source: &Path, line: isize) -> usize {
         let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
+            let expanded_pos = to_isize(adj.original_line).saturating_add(accumulated_delta);
             if expanded_pos < line {
-                accumulated_delta += adj.delta_line;
+                accumulated_delta = accumulated_delta.saturating_add(adj.delta_line);
             }
         }
-        (line - accumulated_delta) as usize
+        to_line(line.saturating_sub(accumulated_delta))
     }
 
     /// Returns the adjustment whose expanded line range covers `line` in `source`, if any.
@@ -226,11 +274,11 @@ impl OffsetAdjustment {
     pub fn find_macro_adjustment(&self, source: &Path, line: isize) -> Option<&Adjustment> {
         let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
-            if expanded_pos <= line && line < expanded_pos + adj.delta_line {
+            let expanded_pos = to_isize(adj.original_line).saturating_add(accumulated_delta);
+            if expanded_pos <= line && line < expanded_pos.saturating_add(adj.delta_line) {
                 return Some(adj);
             }
-            accumulated_delta += adj.delta_line;
+            accumulated_delta = accumulated_delta.saturating_add(adj.delta_line);
         }
         None
     }
