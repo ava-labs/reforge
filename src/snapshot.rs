@@ -358,11 +358,11 @@ fn diff(
         }
     }
 
-    let mut increased: usize = 0;
-    let mut decreased: usize = 0;
-    let mut unchanged: usize = 0;
-    let mut overall_gas_change = 0i128;
-    let mut overall_gas_used = 0i128;
+    let increased = diffs.iter().filter(|d| d.gas_change() > 0).count();
+    let decreased = diffs.iter().filter(|d| d.gas_change() < 0).count();
+    let unchanged = diffs.iter().filter(|d| d.gas_change() == 0).count();
+    let overall_gas_change: i128 = diffs.iter().map(GasSnapshotDiff::gas_change).sum();
+    let overall_gas_used: i128 = diffs.iter().map(|d| i128::from(d.target_gas_used.gas())).sum();
 
     // Sort based on user preference
     match sort_order {
@@ -386,18 +386,7 @@ fn diff(
 
     for diff in &diffs {
         let gas_change = diff.gas_change();
-        overall_gas_change = overall_gas_change.saturating_add(gas_change);
-        overall_gas_used = overall_gas_used.saturating_add(i128::from(diff.target_gas_used.gas()));
         let gas_diff = diff.gas_diff();
-
-        // Classify changes
-        if gas_change > 0 {
-            increased = increased.saturating_add(1);
-        } else if gas_change < 0 {
-            decreased = decreased.saturating_add(1);
-        } else {
-            unchanged = unchanged.saturating_add(1);
-        }
 
         // Display with icon and before/after values
         let icon = if gas_change > 0 {
