@@ -24,10 +24,10 @@ use foundry_compilers::{
 use crate::errors::TEST_COMPILER_OUTPUT;
 use crate::{MacroRules, errors::correct_fmt_msg};
 
-/// https://eips.ethereum.org/EIPS/eip-170
+/// <https://eips.ethereum.org/EIPS/eip-170>
 const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
 
-/// https://eips.ethereum.org/EIPS/eip-3860
+/// <https://eips.ethereum.org/EIPS/eip-3860>
 const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Keeps track of the project being compiled. It is responsible
@@ -65,10 +65,10 @@ impl ProjectCompiler {
         // error line numbers after compilation.
         let macros = preprocessor.clone();
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
@@ -79,7 +79,7 @@ impl ProjectCompiler {
                 compiler.compile().map_err(eyre::Error::from)?;
 
             // Remap solc error line numbers from expanded source back to original source.
-            for error in output.output_mut().errors.iter_mut() {
+            for error in &mut output.output_mut().errors {
                 if let MultiCompilerError::Solc(e) = error {
                     correct_fmt_msg(&macros, e);
                 }
@@ -181,16 +181,12 @@ impl ProjectCompiler {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
-                    let is_dev_contract = artifact
-                        .abi
-                        .as_ref()
-                        .map(|abi| {
-                            abi.functions().any(|f| {
-                                f.test_function_kind().is_known()
-                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
-                            })
+                    let is_dev_contract = artifact.abi.as_ref().is_some_and(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
-                        .unwrap_or(false);
+                    });
 
                     let unique_name = if artifact_list.len() > 1 {
                         format!(

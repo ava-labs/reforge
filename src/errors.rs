@@ -7,7 +7,7 @@ use std::{fs, path::Path};
 
 use foundry_compilers::artifacts::Error as SolcError;
 
-use crate::{MacroOriginalLocation, MacroRules};
+use crate::{MacroOriginalLocation, MacroRules, span_utils::to_isize};
 
 #[cfg(test)]
 pub static TEST_COMPILER_OUTPUT: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -176,7 +176,7 @@ fn framed_line(line: &str) -> Option<usize> {
 fn remap_framed_line(macros: &MacroRules, source: &Path, line: &str) -> String {
     let Some(line_num) = framed_line(line) else { return line.to_string() };
     let adjustments = macros.offset_adjustments.lock().unwrap();
-    let remapped = adjustments.get_original_line(source, line_num as isize);
+    let remapped = adjustments.get_original_line(source, to_isize(line_num));
     drop(adjustments);
     let (prefix, rest) = line.split_once('|').unwrap();
     let field_width = prefix.trim_end().len();

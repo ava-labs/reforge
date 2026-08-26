@@ -159,7 +159,7 @@ pub struct TestArgs {
     #[arg(long)]
     trace_depth: Option<usize>,
 
-    /// Output test results as JUnit XML report.
+    /// Output test results as `JUnit` XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
 
@@ -237,7 +237,7 @@ impl TestArgs {
                 bail!("Can not supply both --match-path and |path|");
             }
         } else {
-            filter.path_pattern = self.path.clone();
+            filter.path_pattern.clone_from(&self.path);
         }
         Ok(merge_filter_with_config(filter, config))
     }
@@ -302,7 +302,7 @@ impl Provider for TestArgs {
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
-            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.clone().into());
         }
 
         if self.show_progress {
@@ -350,7 +350,7 @@ pub(crate) async fn compile_and_run(
 
     let output = compiler.compile(&project, macros)?;
 
-    let outcome = run_tests(
+    let outcome = Box::pin(run_tests(
         test_args,
         &project.paths.root,
         config,
@@ -358,14 +358,14 @@ pub(crate) async fn compile_and_run(
         &output,
         preprocessed_sources_arc,
         false,
-    )
+    ))
     .await?;
     Ok(outcome)
 }
 
 pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
     let silent = test_args.junit || shell::is_json();
-    let outcome = compile_and_run(&mut test_args, macros).await?;
+    let outcome = Box::pin(compile_and_run(&mut test_args, macros)).await?;
     outcome.ensure_ok(silent)
 }
 
@@ -509,6 +509,11 @@ pub async fn run_tests(
 // run_tests_inner — duplicated from forge's private method, using public APIs
 // ---------------------------------------------------------------------------
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "mirrors forge's private run_tests_inner; kept as one block so it stays diffable \
+              against upstream"
+)]
 async fn run_tests_inner(
     args: &TestArgs,
     mut runner: MultiContractRunner,
@@ -572,7 +577,7 @@ async fn run_tests_inner(
     // Non-streaming JSON mode.
     if !args.gas_report && !args.summary && shell::is_json() {
         let mut results = runner.test_collect(filter)?;
-        results.values_mut().for_each(|suite_result| {
+        for suite_result in results.values_mut() {
             for test_result in suite_result.test_results.values_mut() {
                 if verbosity >= 2 {
                     test_result.decoded_logs = decode_console_logs(&test_result.logs);
@@ -580,7 +585,7 @@ async fn run_tests_inner(
                     test_result.logs = vec![];
                 }
             }
-        });
+        }
         foundry_common::sh_println!("{}", serde_json::to_string(&results)?)?;
         return Ok(TestOutcome::new(Some(runner), results, args.allow_failure));
     }
@@ -758,7 +763,7 @@ async fn run_tests_inner(
                     }
                 }
             }
-            result.gas_report_traces = Default::default();
+            result.gas_report_traces = Vec::default();
 
             for (group, new_snapshots) in &result.gas_snapshots {
                 gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
@@ -781,10 +786,10 @@ async fn run_tests_inner(
                             .iter()
                             .filter_map(|(k, v)| {
                                 previous_snapshots.get(k).and_then(|prev| {
-                                    if prev != v {
-                                        Some((k.clone(), (prev.clone(), v.clone())))
-                                    } else {
+                                    if prev == v {
                                         None
+                                    } else {
+                                        Some((k.clone(), (prev.clone(), v.clone())))
                                     }
                                 })
                             })

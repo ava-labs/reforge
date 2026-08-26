@@ -146,7 +146,7 @@ impl CoverageArgs {
         let report = self.prepare(&paths, &mut output, preprocessed_sources)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, config, evm_opts).await
+        Box::pin(self.collect(&paths.root, &output, report, config, evm_opts)).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -318,7 +318,8 @@ impl CoverageArgs {
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
         let outcome =
-            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
+            Box::pin(self.test.run_tests(project_root, config, evm_opts, output, &filter, true))
+                .await?;
 
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
@@ -472,7 +473,7 @@ fn build_expanded_compiler(
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
     compiler.enter_mut(|compiler| {
         let mut pcx = compiler.parse();
-        for (path, source) in preprocessed.iter() {
+        for (path, source) in preprocessed {
             let abs = if path.is_absolute() { path.clone() } else { root.join(path) };
             if let Ok(src_file) =
                 compiler.sess().source_map().new_source_file(abs, source.content.as_str())

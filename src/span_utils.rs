@@ -45,7 +45,7 @@ fn newlines_before(text: &str, end: usize) -> usize {
 }
 
 /// Widens a `usize` to `isize`, saturating rather than wrapping.
-fn to_isize(value: usize) -> isize {
+pub(crate) fn to_isize(value: usize) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
 }
 
@@ -140,6 +140,7 @@ impl<'a> AdjustmentEntry<'a> {
     /// Attaches macro attribution to this edit. `name` identifies the macro rule;
     /// `original_loc` optionally points back to the location in the original source that
     /// triggered the generation, for more precise error reporting.
+    #[must_use]
     pub fn with(self, name: &'a str, original_loc: Option<MacroOriginalLocation>) -> Self {
         Self { name: Some(name), original_loc, ..self }
     }
@@ -151,6 +152,10 @@ impl<'a> AdjustmentEntry<'a> {
     /// `original_offset` must be a byte offset derived from a Solar HIR span (i.e. relative to
     /// the unmodified source). The method translates it to the current position in the
     /// already-modified text before performing the insertion.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn insert(self, original_offset: usize) -> EditInfo {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
@@ -159,7 +164,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_offset, content.as_str(), text, "");
         content.insert_str(adjusted, text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(str::to_string);
             adj.original_location = original_loc;
         }
         info
@@ -172,6 +177,10 @@ impl<'a> AdjustmentEntry<'a> {
     /// Both range endpoints are translated through any previously recorded adjustments before the
     /// replacement is applied. Does nothing and returns `None` if `original_range` is empty or
     /// inverted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn replace(self, original_range: Range<usize>) -> Option<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
@@ -186,7 +195,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_range.start, content.as_str(), text, &removed);
         content.replace_range(adjusted_start..adjusted_end, text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(str::to_string);
             adj.original_location = original_loc;
         }
         Some(info)

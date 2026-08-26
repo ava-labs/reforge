@@ -10,6 +10,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
+    fmt::Write as _,
     time::Duration,
 };
 
@@ -51,16 +52,16 @@ impl TestSummaryReport {
 impl fmt::Display for TestSummaryReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if shell::is_json() {
-            writeln!(f, "{}", self.format_json_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "{}", self.format_json_output(self.is_detailed, &self.outcome))?;
         } else {
-            writeln!(f, "\n{}", self.format_table_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "\n{}", self.format_table_output(self.is_detailed, &self.outcome))?;
         }
         Ok(())
     }
 }
 
 impl TestSummaryReport {
-    fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
+    fn format_json_output(&self, is_detailed: bool, outcome: &TestOutcome) -> String {
         let output = serde_json::json!({
             "results": outcome.results.iter().map(|(contract, suite)| {
                 let (suite_path, suite_name) = contract.split_once(':').unwrap();
@@ -73,7 +74,7 @@ impl TestSummaryReport {
                     ("failed".to_string(), serde_json::Value::from(failed)),
                     ("skipped".to_string(), serde_json::Value::from(skipped)),
                 ]);
-                if *is_detailed {
+                if is_detailed {
                     result.insert("file_path".to_string(), serde_json::Value::from(suite_path));
                     result.insert(
                         "duration".to_string(),
@@ -86,7 +87,7 @@ impl TestSummaryReport {
         serde_json::to_string_pretty(&output).unwrap()
     }
 
-    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
+    fn format_table_output(&self, is_detailed: bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
             table.load_preset(ASCII_MARKDOWN);
@@ -99,7 +100,7 @@ impl TestSummaryReport {
             Cell::new("Failed").fg(Color::Red),
             Cell::new("Skipped").fg(Color::Yellow),
         ]);
-        if *is_detailed {
+        if is_detailed {
             row.add_cell(Cell::new("File Path").fg(Color::Cyan));
             row.add_cell(Cell::new("Duration").fg(Color::Cyan));
         }
@@ -227,7 +228,7 @@ pub fn create_silent_solar_analysis(sources: &Sources) -> eyre::Result<Compiler>
     analysis
         .enter_mut(|compiler| -> SolcResult<()> {
             let mut pcx = compiler.parse();
-            for (path, src) in sources.iter() {
+            for (path, src) in sources {
                 if let Ok(src_file) =
                     compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
                 {
@@ -284,7 +285,7 @@ pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {
@@ -296,7 +297,7 @@ pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     }
 }
 
-/// Generate test report in JUnit XML report format.
+/// Generate test report in `JUnit` XML report format.
 pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
     let total_duration: Duration = results.values().map(|suite| suite.duration).sum();
     let mut junit_report = Report::new("Test run");
@@ -318,7 +319,6 @@ pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) 
             test_case.set_time(test_result.duration);
             let mut sys_out = String::new();
             let result_report = test_result.kind.report();
-            use std::fmt::Write;
             write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
             if verbosity >= 2 && !test_result.logs.is_empty() {
                 write!(sys_out, "\\nLogs:\\n").unwrap();

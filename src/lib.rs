@@ -1,6 +1,10 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
+// Pedantic lints target the production code; the test modules are held to the
+// default `clippy::all` bar.
+#![cfg_attr(test, allow(clippy::pedantic))]
+
 mod build;
 mod coverage;
 pub mod display;
@@ -80,20 +84,17 @@ pub enum ForgeCommand {
 
 impl FromArgMatches for ForgeCommand {
     fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
-        match matches.subcommand() {
-            Some(("test" | "t", sub_matches)) => {
-                Ok(ForgeCommand::Intercept(TestArgs::from_arg_matches(sub_matches)?))
-            }
-            _ => {
-                // With global = true, clap stores global args (verbosity, quiet, etc.) in the
-                // subcommand matches, not in the root matches. Parse GlobalArgs from there.
-                let global = match matches.subcommand() {
-                    Some((_, sub_matches)) => GlobalArgs::from_arg_matches(sub_matches)?,
-                    None => GlobalArgs::default(),
-                };
-                let cmd = ForgeSubcommand::from_arg_matches(matches)?;
-                Ok(ForgeCommand::Forward(Forge { global, cmd }))
-            }
+        if let Some(("test" | "t", sub_matches)) = matches.subcommand() {
+            Ok(ForgeCommand::Intercept(TestArgs::from_arg_matches(sub_matches)?))
+        } else {
+            // With global = true, clap stores global args (verbosity, quiet, etc.) in the
+            // subcommand matches, not in the root matches. Parse GlobalArgs from there.
+            let global = match matches.subcommand() {
+                Some((_, sub_matches)) => GlobalArgs::from_arg_matches(sub_matches)?,
+                None => GlobalArgs::default(),
+            };
+            let cmd = ForgeSubcommand::from_arg_matches(matches)?;
+            Ok(ForgeCommand::Forward(Forge { global, cmd }))
         }
     }
 
@@ -149,6 +150,7 @@ pub struct PreprocessingData<'pre> {
 }
 
 impl<'pre> PreprocessingData<'pre> {
+    #[must_use]
     pub fn adjusted_offset(&self, path: &Path, original_offset: usize) -> usize {
         self.offset_adjustments.adjusted_offset(path, original_offset)
     }
@@ -184,6 +186,16 @@ impl Debug for MacroRules {
 impl MacroRules {
     /// Runs the CLI. This should be used by downstream users as the main entry point of their
     /// program.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the global Foundry setup fails, or if the dispatched
+    /// subcommand does.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the arguments cannot be re-parsed after the `--display` glob is
+    /// stripped, which would indicate a bug in the argument rewriting.
     pub fn run(self) -> eyre::Result<()> {
         setup()?;
         let args = Reforge::parse();
@@ -191,16 +203,14 @@ impl MacroRules {
         match args.forge {
             ForgeCommand::Intercept(test_args) => {
                 test_args.global.init()?;
-                let macros = if !args.disable_macros {
-                    if self.rules.is_empty() {
-                        tracing::info!("No macros rules present, skipping macro expansion.");
-                        println!("No macros rules present, skipping macro expansion.");
-                        MacroRules::default()
-                    } else {
-                        self
-                    }
-                } else {
+                let macros = if args.disable_macros {
                     MacroRules::default()
+                } else if self.rules.is_empty() {
+                    tracing::info!("No macros rules present, skipping macro expansion.");
+                    println!("No macros rules present, skipping macro expansion.");
+                    MacroRules::default()
+                } else {
+                    self
                 };
                 let runtime = test_args.global.tokio_runtime();
                 runtime.block_on(test::test(test_args, macros))
@@ -307,7 +317,7 @@ impl Preprocessor<SolcCompiler> for MacroRules {
                 root_dir: &paths.root,
                 src_dir: &paths.paths_relative().sources,
                 mocks,
-                offset_adjustments: Default::default(),
+                offset_adjustments: OffsetAdjustment::default(),
             };
             let gcx = compiler.gcx();
             for rule in &self.rules {
@@ -355,6 +365,7 @@ impl Preprocessor<MultiCompiler> for MacroRules {
 /// Walks backward from `span` in the source text and collects contiguous non-empty lines
 /// that form a comment block (`//` or `/* ... */`). Returns `None` if the preceding
 /// non-whitespace content is not a comment, or if the item's source is not in `data.input`.
+#[must_use]
 pub fn get_comment(
     ctx: &Gcx,
     source_id: SourceId,

@@ -31,7 +31,7 @@ pub struct Lockfile<'a> {
     git: Option<&'a Git<'a>>,
     /// Absolute path to the lockfile.
     #[serde(skip)]
-    lockfile_path: PathBuf,
+    path: PathBuf,
 }
 
 impl<'a> Lockfile<'a> {
@@ -42,11 +42,7 @@ impl<'a> Lockfile<'a> {
     /// You will need to call [`forge::Lockfile::read`] or [`forge::Lockfile::sync`] to load the
     /// lockfile.
     pub fn new(project_root: &Path) -> Self {
-        Self {
-            deps: HashMap::default(),
-            git: None,
-            lockfile_path: project_root.join(forge::FOUNDRY_LOCK),
-        }
+        Self { deps: HashMap::default(), git: None, path: project_root.join(forge::FOUNDRY_LOCK) }
     }
 
     /// Set the git instance to be used for submodule operations.
@@ -59,11 +55,11 @@ impl<'a> Lockfile<'a> {
     ///
     /// Throws an error if the lockfile does not exist.
     pub fn read(&mut self) -> eyre::Result<()> {
-        if !self.lockfile_path.exists() {
-            return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
+        if !self.path.exists() {
+            return Err(eyre::eyre!("Lockfile not found at {}", self.path.display()));
         }
 
-        let lockfile_str = read_to_string(&self.lockfile_path)?;
+        let lockfile_str = read_to_string(&self.path)?;
 
         self.deps = serde_json::from_str(&lockfile_str)?;
 
@@ -73,7 +69,7 @@ impl<'a> Lockfile<'a> {
     }
 }
 
-/// Check soldeer.lock file consistency using soldeer_core APIs
+/// Check soldeer.lock file consistency using `soldeer_core` APIs
 pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
     let soldeer_lock_path = config.root.join("soldeer.lock");
     if !soldeer_lock_path.exists() {
@@ -124,7 +120,7 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
         return;
     }
 
-    for (dep_path, dep_identifier) in lockfile.deps.iter() {
+    for (dep_path, dep_identifier) in &lockfile.deps {
         let full_path = config.root.join(dep_path);
 
         if !full_path.exists() {
@@ -132,12 +128,9 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
             continue;
         }
 
-        let actual_rev = match git.get_rev("HEAD", &full_path) {
-            Ok(rev) => rev,
-            Err(_) => {
-                sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display()).ok();
-                continue;
-            }
+        let Ok(actual_rev) = git.get_rev("HEAD", &full_path) else {
+            sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display()).ok();
+            continue;
         };
 
         // Compare with the expected revision from lockfile

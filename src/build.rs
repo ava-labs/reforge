@@ -99,7 +99,7 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
     }
 
     // Only run the `SolidityLinter` if lint on build and no compilation errors.
-    if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
+    if config.lint.lint_on_build && !output.output().errors.iter().any(CompilationError::is_error) {
         lint(&project, &config, build_args.paths.as_deref(), &mut output, preprocessed_sources)
             .wrap_err("Lint Failed")?;
     }
@@ -168,7 +168,7 @@ fn lint(
                     fs::canonicalize(&abs).ok().map(|cp| (cp, s))
                 })
                 .collect::<BTreeMap<_, _>>();
-            for (path, source) in solar_sources.input.sources.iter_mut() {
+            for (path, source) in &mut solar_sources.input.sources {
                 if let Some(pre_source) = canonicalized.get(path) {
                     *source = pre_source.clone();
                 }
