@@ -20,7 +20,10 @@
 //! so (unlike `build`/`test`) we cannot drive it via public APIs. Instead we
 //! mirror the CLI struct here and copy the private post-compile logic verbatim.
 
-use std::path::{Path, PathBuf};
+use std::{
+    mem,
+    path::{Path, PathBuf},
+};
 
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
@@ -48,6 +51,7 @@ use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
+use solar::{config::CompilerStage, sema::Compiler as SolarCompiler};
 
 use crate::project_compiler::ProjectCompiler;
 
@@ -130,7 +134,7 @@ impl CoverageArgs {
             let (project, output) = self.build(&config, macros)?;
             (project.paths, output)
         };
-        let outputs = std::mem::take(&mut *preprocessed.lock().unwrap());
+        let outputs = mem::take(&mut *preprocessed.lock().unwrap());
         let preprocessed_sources = if outputs.is_empty() {
             None
         } else {
@@ -232,7 +236,7 @@ impl CoverageArgs {
         }
 
         output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
-            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+            if compiler.gcx().stage() < Some(CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
             }
             convert_solar_errors(compiler.dcx())
@@ -464,7 +468,7 @@ fn build_expanded_compiler(
     preprocessed: &Sources,
     root: &Path,
     sol_paths: &ProjectPathsConfig<SolcLanguage>,
-) -> solar::sema::Compiler {
+) -> SolarCompiler {
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
     crate::solar_load_and_lower(
         &mut compiler,

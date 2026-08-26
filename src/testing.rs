@@ -3,16 +3,22 @@
 
 //! Test utilities for verifying macro expansions against expected Solidity output.
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use foundry_compilers::{
     Language, ProjectPathsConfig, SourceParser,
     artifacts::{SolcLanguage, Source, Sources},
+    error::Result as SolcResult,
+    resolver::parse::SolParser,
     utils::source_files_iter,
 };
 use solar::{parse::interface::Session, sema::Compiler};
 
-use crate::{Macro, PreprocessingData};
+use crate::{Macro, PreprocessingData, display::format_sol};
 
 /// Loads all `.sol` files under `dir` into a `Sources` map keyed by absolute path.
 pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
@@ -40,7 +46,7 @@ pub fn test_macros(
     let sources = expand_macros(source, None, macro_rules)?;
     let expected_sources = load_sol_sources(expected)?;
 
-    let mut failures: Vec<(std::path::PathBuf, String)> = Vec::new();
+    let mut failures: Vec<(PathBuf, String)> = Vec::new();
     for (actual_path, actual_src) in &sources {
         let relative_path = actual_path.strip_prefix(source).map_err(|_| {
             eyre::eyre!(
@@ -50,10 +56,10 @@ pub fn test_macros(
             )
         })?;
         let expected_path = expected.join(relative_path);
-        let actual_formatted = crate::display::format_sol(actual_src.content.as_str());
-        let matches = expected_sources.get(&expected_path).is_some_and(|exp| {
-            actual_formatted == crate::display::format_sol(exp.content.as_str())
-        });
+        let actual_formatted = format_sol(actual_src.content.as_str());
+        let matches = expected_sources
+            .get(&expected_path)
+            .is_some_and(|exp| actual_formatted == format_sol(exp.content.as_str()));
         if !matches {
             failures.push((relative_path.to_path_buf(), actual_formatted));
         }
@@ -63,9 +69,9 @@ pub fn test_macros(
         for (relative_path, content) in &failures {
             let snapshot_path = snapshot.join(relative_path);
             if let Some(parent) = snapshot_path.parent() {
-                std::fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent)?;
             }
-            std::fs::write(&snapshot_path, content)?;
+            fs::write(&snapshot_path, content)?;
         }
         let paths: Vec<_> = failures.iter().map(|(p, _)| p.display().to_string()).collect();
         eyre::bail!(
@@ -119,10 +125,7 @@ pub fn expand_macros_with_sources(
     macro_rules: &[Macro],
 ) -> eyre::Result<Sources> {
     let mut compiler = match paths {
-        Some(paths) => {
-            foundry_compilers::resolver::parse::SolParser::new(paths.with_language_ref())
-                .into_compiler()
-        }
+        Some(paths) => SolParser::new(paths.with_language_ref()).into_compiler(),
         None => {
             let session = Session::builder().with_silent_emitter(None).build();
             Compiler::new(session)
@@ -151,7 +154,7 @@ pub fn expand_macros_with_sources(
         offset_adjustments: Default::default(),
     };
     compiler
-        .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
+        .enter_mut(|compiler| -> SolcResult<()> {
             let gcx = compiler.gcx();
             for rule in macro_rules {
                 rule(&gcx, &mut data)?;

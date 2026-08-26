@@ -7,7 +7,7 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::{collections::BTreeMap, path::PathBuf, time::Instant};
+use std::{collections::BTreeMap, mem, path::PathBuf, process, time::Instant};
 
 use foundry_common::{
     TestFunctionExt,
@@ -20,7 +20,9 @@ use foundry_compilers::{
     multi::{MultiCompiler, MultiCompilerError},
 };
 
-use crate::MacroRules;
+#[cfg(test)]
+use crate::errors::TEST_COMPILER_OUTPUT;
+use crate::{MacroRules, errors::correct_fmt_msg};
 
 /// https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
@@ -54,11 +56,11 @@ impl ProjectCompiler {
     ) -> eyre::Result<ProjectCompileOutput<MultiCompiler>> {
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            std::process::exit(0);
+            process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
-        let files = std::mem::take(&mut self.files);
+        let files = mem::take(&mut self.files);
         // Clone these before `self` is moved into `compile_with`.
         let macros = preprocessor.clone();
         let project_root = self.project_root.clone();
@@ -79,7 +81,7 @@ impl ProjectCompiler {
             // Remap solc error line numbers from expanded source back to original source.
             for error in output.output_mut().errors.iter_mut() {
                 if let MultiCompilerError::Solc(e) = error {
-                    crate::errors::correct_fmt_msg(&macros, e, &project_root)?;
+                    correct_fmt_msg(&macros, e, &project_root)?;
                 }
             }
 
@@ -109,7 +111,7 @@ impl ProjectCompiler {
 
         if bail && output.has_compiler_errors() {
             #[cfg(test)]
-            crate::errors::TEST_COMPILER_OUTPUT.lock().unwrap().push(format!("{output}"));
+            TEST_COMPILER_OUTPUT.lock().unwrap().push(format!("{output}"));
             eyre::bail!("{output}")
         }
 

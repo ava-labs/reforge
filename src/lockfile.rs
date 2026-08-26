@@ -7,13 +7,17 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use forge::revm::primitives::HashMap;
 use foundry_cli::utils::Git;
 use foundry_common::sh_warn;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
+use soldeer_core::{install::check_dependency_integrity, lock::read_lockfile};
 use tracing::trace;
 
 /// A lockfile handler that keeps track of the dependencies and their current state.
@@ -41,9 +45,9 @@ impl Lockfile {
     ///
     /// Returns `Ok(None)` if the lockfile does not exist.
     pub fn read(&mut self) -> eyre::Result<Option<()>> {
-        let lockfile_str = match std::fs::read_to_string(&self.lockfile_path) {
+        let lockfile_str = match fs::read_to_string(&self.lockfile_path) {
             Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
 
@@ -63,7 +67,7 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
     }
 
     // Note: read_lockfile returns Ok with empty entries for malformed files
-    let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
+    let Ok(lockfile) = read_lockfile(&soldeer_lock_path) else {
         return;
     };
 
@@ -72,7 +76,7 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
         let dep_name = entry.name();
 
         // Use soldeer_core's integrity check
-        match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
+        match check_dependency_integrity(entry, &deps_dir).await {
             Ok(status) => {
                 use soldeer_core::install::DependencyStatus;
                 // Check if status indicates a problem

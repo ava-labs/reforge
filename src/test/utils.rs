@@ -7,20 +7,27 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    time::Duration,
+};
 
 use chrono::Utc;
 use comfy_table::{Cell, Color, Row, Table, presets::ASCII_MARKDOWN};
 use forge::{
     MultiContractRunner,
     decode::decode_console_logs,
+    executors::invariant::InvariantMetrics,
     result::{SuiteResult, TestOutcome, TestStatus},
 };
 use foundry_common::{TestFunctionExt, fs, shell};
+use foundry_compilers::artifacts::Sources;
 use foundry_config::Config;
 use itertools::Itertools;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use regex::Regex;
+use solar::{interface::Session, sema::Compiler};
 
 use crate::test::filter::ProjectPathsAwareFilter;
 
@@ -163,9 +170,7 @@ impl TestSummaryReport {
     }
 }
 
-pub fn format_invariant_metrics_table(
-    test_metrics: &std::collections::HashMap<String, forge::executors::invariant::InvariantMetrics>,
-) -> Table {
+pub fn format_invariant_metrics_table(test_metrics: &HashMap<String, InvariantMetrics>) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
         table.load_style(ASCII_MARKDOWN);
@@ -217,7 +222,10 @@ pub fn format_invariant_metrics_table(
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
-struct StderrSilencer(std::os::fd::OwnedFd);
+use std::os::fd::OwnedFd;
+
+#[cfg(unix)]
+struct StderrSilencer(OwnedFd);
 
 #[cfg(unix)]
 impl StderrSilencer {
@@ -279,11 +287,9 @@ where
 /// Creates a new Solar compiler instance with a silent (buffer) emitter and
 /// loads the given sources into it. Used to replace the runner's Solar analysis
 /// that was built on stale on-disk (pre-macro) sources.
-pub fn create_silent_solar_analysis(
-    sources: &foundry_compilers::artifacts::Sources,
-) -> eyre::Result<solar::sema::Compiler> {
-    let session = solar::interface::Session::builder().with_silent_emitter(None).build();
-    let mut compiler = solar::sema::Compiler::new(session);
+pub fn create_silent_solar_analysis(sources: &Sources) -> eyre::Result<Compiler> {
+    let session = Session::builder().with_silent_emitter(None).build();
+    let mut compiler = Compiler::new(session);
     crate::solar_load_and_lower(
         &mut compiler,
         sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())),
