@@ -20,10 +20,11 @@
 //! logic. The public `GasSnapshotEntry`/`Format` types are reused as-is.
 
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, Reverse},
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
+    process,
     str::FromStr,
 };
 
@@ -37,9 +38,11 @@ use forge::{
     cmd::snapshot::{Format, GasSnapshotEntry},
     result::{SuiteTestResult, TestKindReport, TestOutcome},
 };
-use foundry_cli::utils::STATIC_FUZZ_SEED;
+use foundry_cli::{opts::GlobalArgs, utils::STATIC_FUZZ_SEED};
 use foundry_common::{sh_println, shell};
 use yansi::Paint;
+
+use crate::test::{TestArgs, compile_and_run};
 
 /// CLI arguments for `forge snapshot`.
 ///
@@ -99,7 +102,7 @@ pub struct GasSnapshotArgs {
 
     /// All test arguments are supported
     #[command(flatten)]
-    test: crate::test::TestArgs,
+    test: TestArgs,
 
     /// Additional configs for test results
     #[command(flatten)]
@@ -112,7 +115,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = crate::test::compile_and_run(&mut self.test, macros).await?;
+        let outcome = compile_and_run(&mut self.test, macros).await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -123,11 +126,7 @@ impl GasSnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
-            if check(tests, snaps, self.tolerance) {
-                std::process::exit(0)
-            } else {
-                std::process::exit(1)
-            }
+            if check(tests, snaps, self.tolerance) { process::exit(0) } else { process::exit(1) }
         } else {
             if matches!(self.format, Some(Format::Table)) {
                 let table = build_gas_snapshot_table(&tests);
@@ -197,7 +196,7 @@ impl GasSnapshotConfig {
         if self.asc {
             tests.sort_by_key(|a| a.gas_used());
         } else if self.desc {
-            tests.sort_by_key(|b| std::cmp::Reverse(b.gas_used()))
+            tests.sort_by_key(|b| Reverse(b.gas_used()))
         }
 
         tests
@@ -379,7 +378,7 @@ fn diff(
         }
         DiffSortOrder::AbsoluteDesc => {
             // Sort by absolute gas change (largest to smallest)
-            diffs.sort_by_key(|d| std::cmp::Reverse(d.gas_change().abs()));
+            diffs.sort_by_key(|d| Reverse(d.gas_change().abs()));
         }
     }
 
@@ -495,7 +494,7 @@ struct SnapshotCli {
     display: Option<String>,
     #[command(flatten)]
     #[allow(dead_code)]
-    global: foundry_cli::opts::GlobalArgs,
+    global: GlobalArgs,
     #[command(subcommand)]
     cmd: SnapshotSub,
 }

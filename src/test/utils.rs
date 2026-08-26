@@ -7,7 +7,11 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    time::Duration,
+};
 
 use chrono::Utc;
 use comfy_table::{
@@ -16,13 +20,16 @@ use comfy_table::{
 use forge::{
     MultiContractRunner,
     decode::decode_console_logs,
+    executors::invariant::InvariantMetrics,
     result::{SuiteResult, TestOutcome, TestStatus},
 };
 use foundry_common::{TestFunctionExt, fs, shell};
+use foundry_compilers::{artifacts::Sources, error::Result as SolcResult};
 use foundry_config::Config;
 use itertools::Itertools;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use regex::Regex;
+use solar::{interface::Session, sema::Compiler};
 
 use crate::test::filter::ProjectPathsAwareFilter;
 // ---------------------------------------------------------------------------
@@ -129,9 +136,7 @@ impl TestSummaryReport {
     }
 }
 
-pub fn format_invariant_metrics_table(
-    test_metrics: &std::collections::HashMap<String, forge::executors::invariant::InvariantMetrics>,
-) -> Table {
+pub fn format_invariant_metrics_table(test_metrics: &HashMap<String, InvariantMetrics>) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
         table.load_preset(ASCII_MARKDOWN);
@@ -216,13 +221,11 @@ where
 /// Creates a new Solar compiler instance with a silent (buffer) emitter and
 /// loads the given sources into it. Used to replace the runner's Solar analysis
 /// that was built on stale on-disk (pre-macro) sources.
-pub fn create_silent_solar_analysis(
-    sources: &foundry_compilers::artifacts::Sources,
-) -> eyre::Result<solar::sema::Compiler> {
-    let session = solar::interface::Session::builder().with_silent_emitter(None).build();
-    let mut analysis = solar::sema::Compiler::new(session);
+pub fn create_silent_solar_analysis(sources: &Sources) -> eyre::Result<Compiler> {
+    let session = Session::builder().with_silent_emitter(None).build();
+    let mut analysis = Compiler::new(session);
     analysis
-        .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
+        .enter_mut(|compiler| -> SolcResult<()> {
             let mut pcx = compiler.parse();
             for (path, src) in sources.iter() {
                 if let Ok(src_file) =

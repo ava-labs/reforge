@@ -34,7 +34,10 @@ use forge::{
         anchors::find_anchors,
     },
 };
-use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
+use foundry_cli::{
+    opts::GlobalArgs,
+    utils::{LoadConfig, STATIC_FUZZ_SEED},
+};
 use foundry_common::{errors::convert_solar_errors, sh_println, sh_warn};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, SourceParser,
@@ -48,6 +51,7 @@ use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
+use solar::{config::CompilerStage, sema::Compiler};
 
 use crate::project_compiler::ProjectCompiler;
 
@@ -232,7 +236,7 @@ impl CoverageArgs {
         }
 
         output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
-            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+            if compiler.gcx().stage() < Some(CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
             }
             convert_solar_errors(compiler.dcx())
@@ -464,7 +468,7 @@ fn build_expanded_compiler(
     preprocessed: &Sources,
     root: &Path,
     sol_paths: &ProjectPathsConfig<SolcLanguage>,
-) -> solar::sema::Compiler {
+) -> Compiler {
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
     compiler.enter_mut(|compiler| {
         let mut pcx = compiler.parse();
@@ -512,7 +516,7 @@ struct CoverageCli {
     display: Option<String>,
     #[command(flatten)]
     #[allow(dead_code)]
-    global: foundry_cli::opts::GlobalArgs,
+    global: GlobalArgs,
     #[command(subcommand)]
     cmd: CoverageSub,
 }

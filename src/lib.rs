@@ -14,14 +14,15 @@ pub mod testing;
 
 use std::{
     collections::HashSet,
-    fmt::{Debug, Formatter},
+    fmt::{self, Debug, Formatter},
+    mem,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use clap::{FromArgMatches, Parser, Subcommand};
 use forge::{
-    args::setup,
+    args::{run_command, setup},
     cmd::build::BuildArgs,
     opts::{Forge, ForgeSubcommand},
 };
@@ -33,11 +34,16 @@ use foundry_common::{
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser,
     artifacts::{SolcLanguage, Sources},
+    error::Result as SolcResult,
     multi::{MultiCompiler, MultiCompilerInput},
     project::Preprocessor,
+    resolver::parse::SolParser,
     solc::SolcCompiler,
 };
-use solar::sema::Gcx;
+use solar::{
+    interface::Span,
+    sema::{Gcx, hir::SourceId},
+};
 
 pub use crate::span_utils::{
     AdjustmentEntry, EditInfo, MacroOriginalLocation, file_offset, line_col_at,
@@ -124,8 +130,7 @@ impl Subcommand for ForgeCommand {
 
 /// A macro rule function: takes the global compiler context and mutable preprocessing data,
 /// and returns a result.
-pub type Macro =
-    fn(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()>;
+pub type Macro = fn(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()>;
 
 /// The data passed to implementations of the `Preprocessor` trait.
 #[derive(Debug)]
@@ -171,7 +176,7 @@ pub struct MacroRules {
 }
 
 impl Debug for MacroRules {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("MacroRules").field("rules", &"<functions>").finish()
     }
 }
@@ -241,12 +246,12 @@ impl MacroRules {
                                 let coverage_args = coverage::parse_from_env();
                                 global.block_on(coverage_args.run(self))
                             }
-                            cmd => forge::args::run_command(Forge { global, cmd }),
+                            cmd => run_command(Forge { global, cmd }),
                         };
                     }
                 }
 
-                forge::args::run_command(forge)
+                run_command(forge)
             }
         }
     }
@@ -272,11 +277,9 @@ impl Preprocessor<SolcCompiler> for MacroRules {
         input: &mut <SolcCompiler as Compiler>::Input,
         paths: &ProjectPathsConfig<<SolcCompiler as Compiler>::Language>,
         mocks: &mut HashSet<PathBuf>,
-    ) -> foundry_compilers::error::Result<()> {
-        let mut compiler =
-            foundry_compilers::resolver::parse::SolParser::new(paths.with_language_ref())
-                .into_compiler();
-        compiler.enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
+    ) -> SolcResult<()> {
+        let mut compiler = SolParser::new(paths.with_language_ref()).into_compiler();
+        compiler.enter_mut(|compiler| -> SolcResult<()> {
             let mut pcx = compiler.parse();
 
             // Add the sources into the context.
@@ -312,7 +315,7 @@ impl Preprocessor<SolcCompiler> for MacroRules {
             }
             *self.preprocessed_sources.lock().unwrap() = Some(prepocessing_data.input.clone());
             *self.offset_adjustments.lock().unwrap() =
-                std::mem::take(&mut prepocessing_data.offset_adjustments);
+                mem::take(&mut prepocessing_data.offset_adjustments);
             Ok(())
         })?;
 
@@ -332,7 +335,7 @@ impl Preprocessor<MultiCompiler> for MacroRules {
         input: &mut <MultiCompiler as Compiler>::Input,
         paths: &ProjectPathsConfig<<MultiCompiler as Compiler>::Language>,
         mocks: &mut HashSet<PathBuf>,
-    ) -> foundry_compilers::error::Result<()> {
+    ) -> SolcResult<()> {
         // Preprocess only Solc compilers.
         let MultiCompilerInput::Solc(input) = input else {
             return Ok(());
@@ -354,8 +357,8 @@ impl Preprocessor<MultiCompiler> for MacroRules {
 /// non-whitespace content is not a comment, or if the item's source is not in `data.input`.
 pub fn get_comment(
     ctx: &Gcx,
-    source_id: solar::sema::hir::SourceId,
-    span: solar::interface::Span,
+    source_id: SourceId,
+    span: Span,
     data: &PreprocessingData<'_>,
 ) -> Option<String> {
     let source = ctx.sources.get(source_id)?;

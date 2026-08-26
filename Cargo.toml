@@ -49,6 +49,7 @@ tempfile = "3"
 
 [lints.clippy]
 all = "warn"
+absolute-paths = "warn"
 arithmetic-side-effects = "warn"
 indexing-slicing = "warn"
 

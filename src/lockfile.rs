@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 pub use forge::DepIdentifier;
 use forge::revm::primitives::HashMap;
 use foundry_cli::utils::Git;
-use foundry_common::sh_warn;
+use foundry_common::{fs::read_to_string, sh_warn};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
+use soldeer_core::{install::check_dependency_integrity, lock::read_lockfile};
 use tracing::trace;
 
 pub const FOUNDRY_LOCK: &str = "foundry.lock";
@@ -62,7 +63,7 @@ impl<'a> Lockfile<'a> {
             return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
         }
 
-        let lockfile_str = foundry_common::fs::read_to_string(&self.lockfile_path)?;
+        let lockfile_str = read_to_string(&self.lockfile_path)?;
 
         self.deps = serde_json::from_str(&lockfile_str)?;
 
@@ -80,7 +81,7 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
     }
 
     // Note: read_lockfile returns Ok with empty entries for malformed files
-    let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
+    let Ok(lockfile) = read_lockfile(&soldeer_lock_path) else {
         return;
     };
 
@@ -89,7 +90,7 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
         let dep_name = entry.name();
 
         // Use soldeer_core's integrity check
-        match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
+        match check_dependency_integrity(entry, &deps_dir).await {
             Ok(status) => {
                 use soldeer_core::install::DependencyStatus;
                 // Check if status indicates a problem

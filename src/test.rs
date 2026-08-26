@@ -12,8 +12,11 @@ mod utils;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::BufWriter,
+    panic::resume_unwind,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::Instant,
 };
 
@@ -24,6 +27,7 @@ use forge::{
     cmd::{install, test::FilterArgs, watch::WatchArgs},
     core::opts::EvmOpts,
     decode::decode_console_logs,
+    fuzz::strategies::LiteralsDictionary,
     gas_report::GasReport,
     multi_runner::matches_artifact,
     result::{SuiteResult, TestKind, TestOutcome, TestStatus},
@@ -39,12 +43,12 @@ use forge::{
 };
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::LoadConfig,
+    utils::{LoadConfig, did_you_mean},
 };
 use foundry_common::{EmptyTestFilter, fs, shell};
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::output_selection::OutputSelection,
+    artifacts::{Sources, output_selection::OutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -60,6 +64,8 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+use inferno::flamegraph::from_lines;
+use tokio::task::spawn_blocking;
 use yansi::Paint;
 
 use crate::{
@@ -370,7 +376,7 @@ pub async fn run_tests(
     mut config: Config,
     mut evm_opts: EvmOpts,
     output: &ProjectCompileOutput,
-    preprocessed_sources: Arc<std::sync::Mutex<Option<foundry_compilers::artifacts::Sources>>>,
+    preprocessed_sources: Arc<Mutex<Option<Sources>>>,
     coverage: bool,
 ) -> eyre::Result<TestOutcome> {
     let filter = args.filter(&config)?;
@@ -426,7 +432,7 @@ pub async fn run_tests(
     if let Some(ref sources) = expanded_sources {
         let analysis = create_silent_solar_analysis(sources)?;
         let analysis = Arc::new(analysis);
-        let fuzz_literals = forge::fuzz::strategies::LiteralsDictionary::new(
+        let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(config.project_paths()),
             config.fuzz.dictionary.max_fuzz_dictionary_literals,
@@ -454,8 +460,8 @@ pub async fn run_tests(
         let contract = suite_name.split(':').next_back().unwrap();
         let test_name = test_name.trim_end_matches("()");
         let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
-        let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
-        let file = std::io::BufWriter::new(file);
+        let file = File::create(&file_name).wrap_err("failed to create file")?;
+        let file = BufWriter::new(file);
 
         let mut options = inferno::flamegraph::Options::default();
         options.title = format!("{label} {contract}::{test_name}");
@@ -465,7 +471,7 @@ pub async fn run_tests(
             fst.reverse();
         }
 
-        inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
+        from_lines(&mut options, fst.iter().map(String::as_str), file)
             .wrap_err("failed to write svg")?;
         foundry_common::sh_println!("Saved to {file_name}")?;
 
@@ -533,9 +539,7 @@ async fn run_tests_inner(
             if let Some(test_pattern) = &filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                if let Some(suggestion) =
-                    foundry_cli::utils::did_you_mean(test_name, candidates).pop()
-                {
+                if let Some(suggestion) = did_you_mean(test_name, candidates).pop() {
                     use std::fmt::Write;
                     write!(msg, "\nDid you mean `{suggestion}`?")?;
                 }
@@ -596,7 +600,7 @@ async fn run_tests_inner(
     let (tx, rx) = channel::<(String, SuiteResult)>();
     let timer = Instant::now();
     let show_progress = config.show_progress;
-    let handle = tokio::task::spawn_blocking({
+    let handle = spawn_blocking({
         let filter = filter.clone();
         move || runner.test(&filter, tx, show_progress).map(|()| runner)
     });
@@ -852,7 +856,7 @@ async fn run_tests_inner(
     match handle.await {
         Ok(result) => outcome.runner = Some(result?),
         Err(e) => match e.try_into_panic() {
-            Ok(payload) => std::panic::resume_unwind(payload),
+            Ok(payload) => resume_unwind(payload),
             Err(e) => return Err(e.into()),
         },
     }
