@@ -51,6 +51,7 @@ tempfile = "3"
 # Lower the priority of the lint groups so the specific entries below override them.
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
 # Pedantic lints that fight the crate's structure rather than pointing at real
 # problems:
 # - the CLI arg structs mirror foundry's flags, and `Option<Option<PathBuf>>` is
@@ -59,6 +60,10 @@ pedantic = { level = "warn", priority = -1 }
 #   the `Result` even when they never fail.
 # - the last two push toward backwards-incompatible signature changes for little
 #   gain (both are allowed in firewood for the same reason).
+# reforge depends on none of the duplicated crates directly: every one of the
+# ~70 duplicates comes from the vendored foundry/alloy/solar tree, so there is
+# no version for this package to unify.
+multiple_crate_versions = "allow"
 struct_excessive_bools = "allow"
 option_option = "allow"
 unnecessary_wraps = "allow"
