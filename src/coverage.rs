@@ -53,7 +53,7 @@ use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use solar::{config::CompilerStage, sema::Compiler as SolarCompiler};
 
-use crate::project_compiler::ProjectCompiler;
+use crate::{project_compiler::ProjectCompiler, solar_load_and_lower};
 
 // Loads project's figment and merges the build cli arguments into it.
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -156,7 +156,7 @@ impl CoverageArgs {
                     Box::new(LcovReporter::new(path, self.lcov_version.clone()))
                 }
                 CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
-                    paths.root.to_path_buf(),
+                    paths.root.clone(),
                     paths.root.join("bytecode-coverage"),
                 )),
                 CoverageReportKind::Debug => Box::new(DebugReporter),
@@ -323,7 +323,8 @@ impl CoverageArgs {
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
         let outcome =
-            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
+            Box::pin(self.test.run_tests(project_root, config, evm_opts, output, &filter, true))
+                .await?;
 
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
@@ -470,7 +471,7 @@ fn build_expanded_compiler(
     sol_paths: &ProjectPathsConfig<SolcLanguage>,
 ) -> SolarCompiler {
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
-    crate::solar_load_and_lower(
+    solar_load_and_lower(
         &mut compiler,
         preprocessed.iter().map(|(path, source)| {
             let abs = if path.is_absolute() { path.clone() } else { root.join(path) };

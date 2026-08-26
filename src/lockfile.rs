@@ -59,7 +59,7 @@ impl Lockfile {
     }
 }
 
-/// Check soldeer.lock file consistency using soldeer_core APIs
+/// Check soldeer.lock file consistency using `soldeer_core` APIs
 pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
     let soldeer_lock_path = config.root.join("soldeer.lock");
     if !soldeer_lock_path.exists() {
@@ -107,7 +107,7 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
         }
     }
 
-    for (dep_path, dep_identifier) in lockfile.deps.iter() {
+    for (dep_path, dep_identifier) in &lockfile.deps {
         let full_path = config.root.join(dep_path);
 
         if !full_path.exists() {
@@ -115,12 +115,9 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
             continue;
         }
 
-        let actual_rev = match git.get_rev("HEAD", &full_path) {
-            Ok(rev) => rev,
-            Err(_) => {
-                sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display()).ok();
-                continue;
-            }
+        let Ok(actual_rev) = git.get_rev("HEAD", &full_path) else {
+            sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display()).ok();
+            continue;
         };
 
         if actual_rev != dep_identifier.rev() {

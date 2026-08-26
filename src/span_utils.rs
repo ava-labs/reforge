@@ -180,6 +180,7 @@ impl<'a> AdjustmentEntry<'a> {
     /// Attaches macro attribution to this edit. `name` identifies the macro rule;
     /// `original_loc` optionally points back to the location in the original source that
     /// triggered the generation, for more precise error reporting.
+    #[must_use]
     pub fn with(self, name: &'a str, original_loc: Option<MacroOriginalLocation>) -> Self {
         Self { name: Some(name), original_loc, ..self }
     }
@@ -196,8 +197,14 @@ impl<'a> AdjustmentEntry<'a> {
     /// in the original, unmodified source, and records the edit so that subsequent macro rules
     /// remain correct.
     ///
+    /// # Errors
+    ///
     /// Returns an error if any byte-offset or line-count arithmetic overflows during adjustment
     /// computation, which would indicate a corrupt or astronomically large source file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn insert(self, original_offset: OriginalOffset) -> eyre::Result<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
@@ -206,7 +213,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_offset, content.as_str(), text, "")?;
         content.insert_str(adjusted.get(), text);
         if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(ToString::to_string);
             adj.original_location = original_loc;
         }
         Ok(info)
@@ -220,6 +227,14 @@ impl<'a> AdjustmentEntry<'a> {
     /// replacement is applied. Does nothing and returns `Ok(None)` if `original_range` is empty or
     /// inverted. Returns an error if byte-offset arithmetic overflows during adjustment
     /// computation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if byte-offset arithmetic overflows during adjustment computation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn replace(self, original_range: Range<OriginalOffset>) -> eyre::Result<Option<EditInfo>> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
@@ -239,7 +254,7 @@ impl<'a> AdjustmentEntry<'a> {
         )?;
         content.replace_range(adjusted_start.get()..adjusted_end.get(), text);
         if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(ToString::to_string);
             adj.original_location = original_loc;
         }
         Ok(Some(info))
@@ -417,8 +432,8 @@ impl OffsetAdjustment {
                 .map(ExpandedOffset::new)
                 .ok_or_else(|| eyre::eyre!("expanded position overflow"))?;
             match f(expanded_pos, adj, &mut acc)? {
-                ControlFlow::Break(_) => return Ok(acc),
-                ControlFlow::Continue(_) => {}
+                ControlFlow::Break(()) => return Ok(acc),
+                ControlFlow::Continue(()) => {}
             }
             if expanded_pos < expanded_offset {
                 accumulated_delta = accumulated_delta

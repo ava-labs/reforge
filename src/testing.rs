@@ -18,7 +18,7 @@ use foundry_compilers::{
 };
 use solar::{parse::interface::Session, sema::Compiler};
 
-use crate::{Macro, PreprocessingData, display::format_sol};
+use crate::{Macro, PreprocessingData, display::format_sol, span_utils::OffsetAdjustment};
 
 /// Loads all `.sol` files under `dir` into a `Sources` map keyed by absolute path.
 pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
@@ -33,6 +33,16 @@ pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
 /// On mismatch, the actual expanded content is written to `mismatches` (mirroring
 /// the same relative path structure) so testers can inspect the output and copy
 /// it to `expected` if it is correct.
+///
+/// # Errors
+///
+/// Returns an error if the sources cannot be read, if macro expansion fails, if
+/// the mismatch output cannot be written, or if any expanded file differs from
+/// its counterpart in `expected`.
+///
+/// # Panics
+///
+/// Panics if `mismatches` contains a path with no parent directory.
 pub fn test_macros(
     source: impl AsRef<Path>,
     expected: impl AsRef<Path>,
@@ -88,6 +98,10 @@ pub fn test_macros(
 /// Runs `macro_rule` over the Solidity sources in `source` and expects the
 /// rule to return an error. Returns the error if one is produced, else fails
 /// if the rule completes without error.
+///
+/// # Errors
+///
+/// Returns an error if the rule unexpectedly succeeds.
 pub fn test_macro_err(source: impl AsRef<Path>, macro_rule: Macro) -> eyre::Result<eyre::Report> {
     match expand_macros(source, None, &[macro_rule]) {
         Err(e) => Ok(e),
@@ -102,6 +116,11 @@ pub fn test_macro_err(source: impl AsRef<Path>, macro_rule: Macro) -> eyre::Resu
 /// When `paths` is `Some`, Solar is initialised with the provided
 /// `ProjectPathsConfig` so that Foundry remappings are resolved correctly. Pass
 /// `None` for self-contained test fixtures that have no external imports.
+///
+/// # Errors
+///
+/// Returns an error if the sources cannot be read from disk, if Solar fails to
+/// parse them, or if any macro rule returns an error.
 pub fn expand_macros(
     source: impl AsRef<Path>,
     paths: Option<&ProjectPathsConfig<SolcLanguage>>,
@@ -118,18 +137,22 @@ pub fn expand_macros(
 /// sources directly. `root` is used as [`PreprocessingData::root_dir`].  When `paths`
 /// is `Some`, Solar is initialised with the provided `ProjectPathsConfig` so that
 /// Foundry remappings are resolved correctly for any imports that solar needs to follow.
+///
+/// # Errors
+///
+/// Returns an error if Solar fails to parse the sources or if any macro rule
+/// returns an error.
 pub fn expand_macros_with_sources(
     mut sources: Sources,
     root: &Path,
     paths: Option<&ProjectPathsConfig<SolcLanguage>>,
     macro_rules: &[Macro],
 ) -> eyre::Result<Sources> {
-    let mut compiler = match paths {
-        Some(paths) => SolParser::new(paths.with_language_ref()).into_compiler(),
-        None => {
-            let session = Session::builder().with_silent_emitter(None).build();
-            Compiler::new(session)
-        }
+    let mut compiler = if let Some(paths) = paths {
+        SolParser::new(paths.with_language_ref()).into_compiler()
+    } else {
+        let session = Session::builder().with_silent_emitter(None).build();
+        Compiler::new(session)
     };
 
     crate::solar_load_and_lower(
@@ -151,7 +174,7 @@ pub fn expand_macros_with_sources(
         root_dir: root,
         src_dir,
         mocks: &mut mocks,
-        offset_adjustments: Default::default(),
+        offset_adjustments: OffsetAdjustment::default(),
     };
     compiler
         .enter_mut(|compiler| -> SolcResult<()> {

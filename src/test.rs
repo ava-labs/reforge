@@ -163,7 +163,7 @@ pub struct TestArgs {
     #[arg(long)]
     trace_depth: Option<usize>,
 
-    /// Output test results as JUnit XML report.
+    /// Output test results as `JUnit` XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
 
@@ -276,7 +276,7 @@ impl TestArgs {
                 bail!("Can not supply both --match-path and |path|");
             }
         } else {
-            filter.path_pattern = self.path.clone();
+            filter.path_pattern.clone_from(&self.path);
         }
         Ok(merge_filter_with_config(filter, config))
     }
@@ -341,7 +341,7 @@ impl Provider for TestArgs {
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
-            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.clone().into());
         }
 
         if self.show_progress {
@@ -389,7 +389,7 @@ pub(crate) async fn compile_and_run(
 
     let output = compiler.compile(&project, macros)?;
 
-    let outcome = run_tests(
+    let outcome = Box::pin(run_tests(
         test_args,
         &project.paths.root,
         config,
@@ -397,18 +397,22 @@ pub(crate) async fn compile_and_run(
         &output,
         preprocessed_arc,
         false,
-    )
+    ))
     .await?;
     Ok(outcome)
 }
 
 pub async fn test(test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
     let silent = test_args.junit || shell::is_json();
-    let outcome = compile_and_run(&test_args, macros).await?;
+    let outcome = Box::pin(compile_and_run(&test_args, macros)).await?;
     outcome.ensure_ok(silent)
 }
 
 /// Executes all the tests in the project.
+#[expect(
+    clippy::too_many_lines,
+    reason = "test orchestration: filter, build, run, decode traces, optionally render flamegraph — no single sub-task is large enough to extract cleanly"
+)]
 pub async fn run_tests(
     args: &TestArgs,
     project_root: &Path,
@@ -431,24 +435,32 @@ pub async fn run_tests(
     let mode = args.single_test_mode();
 
     let verbosity = evm_opts.verbosity;
-    if (args.gas_report && evm_opts.verbosity < 3) || mode.is_some_and(|m| m.is_draw()) {
+    if (args.gas_report && evm_opts.verbosity < 3) || mode.is_some_and(SingleTestMode::is_draw) {
         evm_opts.verbosity = 3;
     }
 
+    // Wrap config and evm_opts in heap allocations before the first await so neither
+    // large struct sits in the future's state machine across the yield point.
+    let config = Arc::new(config);
+    let evm_opts = Box::new(evm_opts);
+
     let env = evm_opts.evm_env().await?;
 
-    let decode_internal = if args.decode_internal || mode.is_some_and(|m| m.is_draw()) {
+    // Unbox immediately before evm_opts is consumed into the runner builder (synchronous).
+    let evm_opts = *evm_opts;
+
+    let decode_internal = if args.decode_internal || mode.is_some_and(SingleTestMode::is_draw) {
         InternalTraceMode::Simple
     } else {
         InternalTraceMode::None
     };
 
-    let config = Arc::new(config);
-
     // Build the runner, suppressing Solar's stderr output.  Solar emits diagnostics on the
     // pre-macro (on-disk) sources at this point; those errors are spurious and will disappear
     // once the runner analysis is replaced below with one that uses the expanded sources.
-    let mut runner = suppress_stderr(|| {
+    // Box the runner so that only a pointer (8 bytes) sits in the future's state
+    // across the run_tests_inner await, rather than the full MultiContractRunner.
+    let mut runner = Box::new(suppress_stderr(|| {
         MultiContractRunnerBuilder::new(config.clone())
             .set_debug(mode == Some(SingleTestMode::Debug))
             .set_decode_internal(decode_internal)
@@ -461,7 +473,7 @@ pub async fn run_tests(
             .fail_fast(args.fail_fast)
             .set_coverage(coverage)
             .build::<MultiCompiler>(output, env, evm_opts)
-    })?;
+    })?);
 
     // If macro expansion produced expanded sources, replace the runner's Solar analysis
     // (which was built on stale on-disk sources) with a fresh silent one.
@@ -482,7 +494,7 @@ pub async fn run_tests(
 
     let libraries = runner.libraries.clone();
     let mut outcome =
-        run_tests_inner(args, runner, config.clone(), verbosity, &filter, output, decode_internal)
+        run_tests_inner(args, *runner, config.clone(), verbosity, &filter, output, decode_internal)
             .await?;
 
     if let Some(draw_mode @ (SingleTestMode::Flamegraph | SingleTestMode::Flamechart)) = mode {
@@ -555,6 +567,11 @@ pub async fn run_tests(
 // run_tests_inner — duplicated from forge's private method, using public APIs
 // ---------------------------------------------------------------------------
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "mirrors forge's private run_tests_inner; kept as one block so it stays diffable \
+              against upstream"
+)]
 async fn run_tests_inner(
     args: &TestArgs,
     mut runner: MultiContractRunner,
@@ -614,7 +631,7 @@ async fn run_tests_inner(
     // Non-streaming JSON mode.
     if !args.gas_report && !args.summary && shell::is_json() {
         let mut results = runner.test_collect(filter)?;
-        results.values_mut().for_each(|suite_result| {
+        for suite_result in results.values_mut() {
             for test_result in suite_result.test_results.values_mut() {
                 if verbosity >= 2 {
                     test_result.decoded_logs = decode_console_logs(&test_result.logs);
@@ -622,7 +639,7 @@ async fn run_tests_inner(
                     test_result.logs = vec![];
                 }
             }
-        });
+        }
         foundry_common::sh_println!("{}", serde_json::to_string(&results)?)?;
         return Ok(TestOutcome::new(Some(runner), results, args.allow_failure));
     }
@@ -793,7 +810,7 @@ async fn run_tests_inner(
                     }
                 }
             }
-            result.gas_report_traces = Default::default();
+            result.gas_report_traces = Vec::default();
 
             for (group, new_snapshots) in &result.gas_snapshots {
                 gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
@@ -815,7 +832,7 @@ async fn run_tests_inner(
                         .iter()
                         .filter_map(|(k, v)| {
                             previous_snapshots.remove(k).and_then(|prev| {
-                                if &prev != v { Some((k.clone(), (prev, v.clone()))) } else { None }
+                                if &prev == v { None } else { Some((k.clone(), (prev, v.clone()))) }
                             })
                         })
                         .collect();
@@ -897,10 +914,9 @@ async fn run_tests_inner(
 /// Failures are shown one level earlier than successes.
 fn min_verbosity(kind: TraceKind, failed: bool) -> u8 {
     match (kind, failed) {
-        (TraceKind::Execution, false) => 4,
         (TraceKind::Execution, true) => 3,
         (TraceKind::Setup, false) => 5,
-        (TraceKind::Setup, true) => 4,
+        (TraceKind::Execution, false) | (TraceKind::Setup, true) => 4,
         (TraceKind::Deployment, _) => u8::MAX,
     }
 }

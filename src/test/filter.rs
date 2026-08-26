@@ -62,12 +62,12 @@ impl fmt::Display for ProjectPathsAwareFilter {
 }
 
 /// Fills `slot` from `from` if `slot` is currently `None`.
-fn or_config<T, U>(slot: &mut Option<U>, from: &Option<T>)
+fn or_config<T, U>(slot: &mut Option<U>, from: Option<&T>)
 where
     T: Clone + Into<U>,
 {
     if slot.is_none() {
-        *slot = from.clone().map(Into::into);
+        *slot = from.cloned().map(Into::into);
     }
 }
 
@@ -77,12 +77,12 @@ pub fn merge_filter_with_config(
     mut filter: FilterArgs,
     config: &Config,
 ) -> ProjectPathsAwareFilter {
-    or_config(&mut filter.test_pattern, &config.test_pattern);
-    or_config(&mut filter.test_pattern_inverse, &config.test_pattern_inverse);
-    or_config(&mut filter.contract_pattern, &config.contract_pattern);
-    or_config(&mut filter.contract_pattern_inverse, &config.contract_pattern_inverse);
-    or_config(&mut filter.path_pattern, &config.path_pattern);
-    or_config(&mut filter.path_pattern_inverse, &config.path_pattern_inverse);
-    or_config(&mut filter.coverage_pattern_inverse, &config.coverage_pattern_inverse);
+    or_config(&mut filter.test_pattern, config.test_pattern.as_ref());
+    or_config(&mut filter.test_pattern_inverse, config.test_pattern_inverse.as_ref());
+    or_config(&mut filter.contract_pattern, config.contract_pattern.as_ref());
+    or_config(&mut filter.contract_pattern_inverse, config.contract_pattern_inverse.as_ref());
+    or_config(&mut filter.path_pattern, config.path_pattern.as_ref());
+    or_config(&mut filter.path_pattern_inverse, config.path_pattern_inverse.as_ref());
+    or_config(&mut filter.coverage_pattern_inverse, config.coverage_pattern_inverse.as_ref());
     ProjectPathsAwareFilter { args_filter: filter, paths: config.project_paths() }
 }

@@ -113,7 +113,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = compile_and_run(&self.test, macros).await?;
+        let outcome = Box::pin(compile_and_run(&self.test, macros)).await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -192,9 +192,9 @@ impl GasSnapshotConfig {
             .collect::<Vec<_>>();
 
         if self.asc {
-            tests.sort_by_key(|a| a.gas_used());
+            tests.sort_by_key(SuiteTestResult::gas_used);
         } else if self.desc {
-            tests.sort_by_key(|b| Reverse(b.gas_used()))
+            tests.sort_by_key(|b| Reverse(b.gas_used()));
         }
 
         tests
@@ -220,9 +220,11 @@ impl GasSnapshotDiff {
     }
 
     /// Determines the percentage change
-    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-    // i128/u64 → f64 is intentionally lossy (acceptable for percentage display);
-    // float division is guarded by the caller against zero denominators.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::as_conversions,
+        reason = "gas counts only feed a percentage rendered to three decimal places; i128/u64 → f64 has no From impl"
+    )]
     fn gas_diff(&self) -> f64 {
         self.gas_change() as f64 / self.target_gas_used.gas() as f64
     }
@@ -342,7 +344,7 @@ fn diff(
     let mut diffs = Vec::with_capacity(tests.len());
     let mut new_tests = Vec::new();
 
-    for test in tests.into_iter() {
+    for test in tests {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
@@ -388,12 +390,10 @@ fn diff(
         let gas_diff = diff.gas_diff();
 
         // Display with icon and before/after values
-        let icon = if gas_change > 0 {
-            "↑".red().to_string()
-        } else if gas_change < 0 {
-            "↓".green().to_string()
-        } else {
-            "━".to_string()
+        let icon = match gas_change.cmp(&0) {
+            Ordering::Greater => "↑".red().to_string(),
+            Ordering::Less => "↓".green().to_string(),
+            Ordering::Equal => "━".to_string(),
         };
 
         sh_println!(
@@ -421,7 +421,13 @@ fn diff(
     #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
     // i128 → f64 is intentionally lossy; acceptable for percentage display.
     let overall_gas_diff = if overall_gas_used > 0 {
-        overall_gas_change as f64 / overall_gas_used as f64
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "gas counts only feed a percentage rendered to three decimal places"
+        )]
+        {
+            overall_gas_change as f64 / overall_gas_used as f64
+        }
     } else {
         0.0
     };
@@ -470,10 +476,11 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
-        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-        // u64 → f64 is intentionally lossy (acceptable for tolerance comparison);
-        // hi is always > 0 here since it equals max(source_gas, target_gas) and we only
-        // reach this branch when tolerance is Some, implying gas values are being compared.
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "gas counts only feed a percentage compared against a whole-number tolerance; u64 → f64 has no From impl"
+        )]
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < f64::from(tolerance)
     } else {

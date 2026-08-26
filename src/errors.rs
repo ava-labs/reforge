@@ -155,7 +155,7 @@ fn format_macro_fmt_msg(
     let abs_file =
         if orig.file.is_absolute() { orig.file.clone() } else { project_root.join(&orig.file) };
     let source_line = fs::read_to_string(&abs_file).ok().and_then(|content| {
-        orig.line.checked_sub(1).and_then(|idx| content.lines().nth(idx)).map(|l| l.to_string())
+        orig.line.checked_sub(1).and_then(|idx| content.lines().nth(idx)).map(ToString::to_string)
     });
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);
     let width = orig.line.to_string().len();
