@@ -3,44 +3,55 @@
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
+ignoreUntil = 2027-08-28
 reason = "paste: compile-time proc-macro only, no runtime attack surface, no fix available upstream"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0194"
+ignoreUntil = 2027-02-28
 reason = "quick-xml: reader-side DoS; reforge only writes XML/SVG, never calls Reader/NsReader"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0195"
+ignoreUntil = 2027-02-28
 reason = "quick-xml: reader-side DoS; reforge only writes XML/SVG, never calls Reader/NsReader"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0104"
+ignoreUntil = 2027-02-28
 reason = "rustls-webpki: requires RevocationOptions + attacker-controlled CRLs; default config unaffected"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0173"
+ignoreUntil = 2027-08-28
 reason = "proc-macro-error2: compile-time proc-macro only, no runtime surface; transitively required by foundry"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0388"
+ignoreUntil = 2027-08-28
 reason = "derivative: compile-time proc-macro only; locked by foundry dev dep; not present in reforge's compiled dependency graph"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0183"
+ignoreUntil = 2027-08-28
 reason = "git2: libgit2 CVE; locked by vergen-git2 in foundry-common which is a build dep only (embeds git metadata at compile time)"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0184"
+ignoreUntil = 2027-08-28
 reason = "git2: libgit2 CVE; locked by vergen-git2 in foundry-common which is a build dep only (embeds git metadata at compile time)"
 
 [[IgnoredVulns]]
 id = "GHSA-h395-gr6q-cpjc"
+ignoreUntil = 2027-02-28
 reason = "jsonwebtoken: JWT algorithm confusion; locked by alloy-rpc-types-engine ^9.3.0; reforge does not call Engine API authentication paths"
 
 [[IgnoredVulns]]
 id = "GHSA-xwfj-jgwm-7wp5"
+ignoreUntil = 2027-08-28
 reason = "tracing-subscriber 0.2.x: CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade; locked by foundry transitive dep; not present in reforge's compiled dependency graph"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0253"
+ignoreUntil = 2027-02-28
 reason = "lru: fix requires semver-breaking 0.18.x upgrade; locked by alloy-provider ^0.16 inside vendored foundry; cannot upgrade without modifying foundry's Cargo.toml"
