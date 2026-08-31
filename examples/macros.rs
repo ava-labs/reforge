@@ -1,10 +1,17 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
-use std::collections::HashMap;
+//! Every rule below has to match the `reforge::Macro` fn-pointer signature, which
+//! takes `&Gcx` — so `Gcx` being cheap to copy is not something a rule can act on.
+#![expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "rule signatures are fixed by the `Macro` fn pointer"
+)]
 
-use foundry_compilers::error::SolcError;
-use reforge::{MacroRules, PreprocessingData, get_comment};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+
+use foundry_compilers::error::{Result as SolcResult, SolcError};
+use reforge::{MacroRules, PreprocessingData, file_offset, get_comment};
 use solar::sema::{Gcx, hir::ContractKind};
 
 fn main() -> eyre::Result<()> {
@@ -17,15 +24,15 @@ fn main() -> eyre::Result<()> {
     macros.run()
 }
 
-fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
+fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> SolcResult<()> {
     Ok(())
 }
 
 /// A macro that adds a function for each struct definition that prints the struct name.
 /// The function is injected into the pre-existing `{name}Library` library.
-fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
+fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(usize, String)>> = HashMap::new();
+    let mut insertions: HashMap<PathBuf, Vec<(usize, String)>> = HashMap::new();
 
     for struct_def in ctx.hir.structs() {
         let Some(source) = ctx.sources.get(struct_def.source) else {
@@ -53,7 +60,8 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset = (library.span.hi().0 - source.file.start_pos.0) as usize - 1;
+        let close_brace_offset =
+            file_offset(library.span.hi().0, source.file.start_pos.0).saturating_sub(1);
         let func = format!(
             "\n    function print{name}() public pure returns (string memory) {{ return \"{name}\"; }}\n"
         );
@@ -71,13 +79,11 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
 
 /// A macro that adds a function to every struct that returns its ID if it has the field and reverts
 /// otherwise.
-fn get_id_or_revert(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn get_id_or_revert(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(usize, String)>> = HashMap::new();
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let mut insertions: HashMap<PathBuf, Vec<(usize, String)>> = HashMap::new();
     let re = RE.get_or_init(|| {
         regex::Regex::new(r"#\[derive\(get_id_or_revert\(contract=(\w+)\)\)]").unwrap()
     });
@@ -123,7 +129,8 @@ fn get_id_or_revert(
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset = (library.span.hi().0 - source.file.start_pos.0) as usize - 1;
+        let close_brace_offset =
+            file_offset(library.span.hi().0, source.file.start_pos.0).saturating_sub(1);
         let func = if has_id_field {
             format!(
                 "\n    function getId{name}({name} memory obj) public pure returns (uint32) {{ return obj.ID; }}\n",
@@ -149,10 +156,7 @@ fn get_id_or_revert(
 
 /// A macro that changes all libraries into contracts if their doc comment contains
 /// #[derive(promote)].
-fn make_libraries_contracts(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn make_libraries_contracts(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     for lib in ctx.hir.contracts().filter(|c| c.kind == ContractKind::Library) {
         let Some(source) = ctx.sources.get(lib.source) else {
             continue;
@@ -165,8 +169,9 @@ fn make_libraries_contracts(
         };
 
         if comment_block.contains("#[derive(promote)]") {
-            let lib_offset = (lib.span.lo().0 - source.file.start_pos.0) as usize;
-            data.entry(path, "contract").replace(lib_offset..lib_offset + "library".len());
+            let lib_offset = file_offset(lib.span.lo().0, source.file.start_pos.0);
+            data.entry(path, "contract")
+                .replace(lib_offset..lib_offset.saturating_add("library".len()));
         }
     }
     Ok(())
@@ -174,10 +179,7 @@ fn make_libraries_contracts(
 
 /// A macro that changes the visibility of functions to public if their doc comment contains
 /// #[derive(public)].
-fn make_func_public(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn make_func_public(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     for func in ctx.hir.functions() {
         let Some(source) = ctx.sources.get(func.source) else {
             continue;
@@ -191,7 +193,7 @@ fn make_func_public(
 
         // Use convenience methods to compute offset adjustments automatically.
         if comment_block.contains("#[derive(public)]") {
-            let original_offset = (func.span.lo().0 - source.file.start_pos.0) as usize;
+            let original_offset = file_offset(func.span.lo().0, source.file.start_pos.0);
             let func_offset = data.adjusted_offset(path, original_offset);
             let Some(src) = data.input.get(path) else {
                 continue;
@@ -205,9 +207,10 @@ fn make_func_public(
                 .ok_or_else(|| SolcError::msg(
                     format!("could not find visibility modifier '{visibility_keyword}' in function at offset {func_offset}")
                 ))?;
-            let original_modifier_start = original_offset + modifier_local_offset;
+            let original_modifier_start = original_offset.saturating_add(modifier_local_offset);
             data.entry(path, "public").replace(
-                original_modifier_start..original_modifier_start + visibility_keyword.len(),
+                original_modifier_start
+                    ..original_modifier_start.saturating_add(visibility_keyword.len()),
             );
         }
     }

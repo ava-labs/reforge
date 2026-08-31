@@ -7,7 +7,12 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    fmt::Write as _,
+    time::Duration,
+};
 
 use chrono::Utc;
 use comfy_table::{
@@ -16,13 +21,16 @@ use comfy_table::{
 use forge::{
     MultiContractRunner,
     decode::decode_console_logs,
+    executors::invariant::InvariantMetrics,
     result::{SuiteResult, TestOutcome, TestStatus},
 };
 use foundry_common::{TestFunctionExt, fs, shell};
+use foundry_compilers::{artifacts::Sources, error::Result as SolcResult};
 use foundry_config::Config;
 use itertools::Itertools;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use regex::Regex;
+use solar::{interface::Session, sema::Compiler};
 
 use crate::test::filter::ProjectPathsAwareFilter;
 // ---------------------------------------------------------------------------
@@ -44,40 +52,42 @@ impl TestSummaryReport {
 impl fmt::Display for TestSummaryReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if shell::is_json() {
-            writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "{}", self.format_json_output(self.is_detailed, &self.outcome))?;
         } else {
-            writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "\n{}", self.format_table_output(self.is_detailed, &self.outcome))?;
         }
         Ok(())
     }
 }
 
 impl TestSummaryReport {
-    fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
+    fn format_json_output(&self, is_detailed: bool, outcome: &TestOutcome) -> String {
         let output = serde_json::json!({
             "results": outcome.results.iter().map(|(contract, suite)| {
                 let (suite_path, suite_name) = contract.split_once(':').unwrap();
                 let passed = suite.successes().count();
                 let failed = suite.failures().count();
                 let skipped = suite.skips().count();
-                let mut result = serde_json::json!({
-                    "suite": suite_name,
-                    "passed": passed,
-                    "failed": failed,
-                    "skipped": skipped,
-                });
-                if *is_detailed {
-                    result["file_path"] = serde_json::Value::String(suite_path.to_string());
-                    result["duration"] =
-                        serde_json::Value::String(format!("{:.2?}", suite.duration));
+                let mut result = serde_json::Map::from_iter([
+                    ("suite".to_string(), serde_json::Value::from(suite_name)),
+                    ("passed".to_string(), serde_json::Value::from(passed)),
+                    ("failed".to_string(), serde_json::Value::from(failed)),
+                    ("skipped".to_string(), serde_json::Value::from(skipped)),
+                ]);
+                if is_detailed {
+                    result.insert("file_path".to_string(), serde_json::Value::from(suite_path));
+                    result.insert(
+                        "duration".to_string(),
+                        serde_json::Value::from(format!("{:.2?}", suite.duration)),
+                    );
                 }
-                result
+                serde_json::Value::Object(result)
             }).collect::<Vec<serde_json::Value>>(),
         });
         serde_json::to_string_pretty(&output).unwrap()
     }
 
-    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
+    fn format_table_output(&self, is_detailed: bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
             table.load_preset(ASCII_MARKDOWN);
@@ -90,7 +100,7 @@ impl TestSummaryReport {
             Cell::new("Failed").fg(Color::Red),
             Cell::new("Skipped").fg(Color::Yellow),
         ]);
-        if *is_detailed {
+        if is_detailed {
             row.add_cell(Cell::new("File Path").fg(Color::Cyan));
             row.add_cell(Cell::new("Duration").fg(Color::Cyan));
         }
@@ -127,9 +137,7 @@ impl TestSummaryReport {
     }
 }
 
-pub fn format_invariant_metrics_table(
-    test_metrics: &std::collections::HashMap<String, forge::executors::invariant::InvariantMetrics>,
-) -> Table {
+pub fn format_invariant_metrics_table(test_metrics: &HashMap<String, InvariantMetrics>) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
         table.load_preset(ASCII_MARKDOWN);
@@ -214,15 +222,13 @@ where
 /// Creates a new Solar compiler instance with a silent (buffer) emitter and
 /// loads the given sources into it. Used to replace the runner's Solar analysis
 /// that was built on stale on-disk (pre-macro) sources.
-pub fn create_silent_solar_analysis(
-    sources: &foundry_compilers::artifacts::Sources,
-) -> eyre::Result<solar::sema::Compiler> {
-    let session = solar::interface::Session::builder().with_silent_emitter(None).build();
-    let mut analysis = solar::sema::Compiler::new(session);
+pub fn create_silent_solar_analysis(sources: &Sources) -> eyre::Result<Compiler> {
+    let session = Session::builder().with_silent_emitter(None).build();
+    let mut analysis = Compiler::new(session);
     analysis
-        .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
+        .enter_mut(|compiler| -> SolcResult<()> {
             let mut pcx = compiler.parse();
-            for (path, src) in sources.iter() {
+            for (path, src) in sources {
                 if let Ok(src_file) =
                     compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
                 {
@@ -279,7 +285,7 @@ pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {
@@ -291,14 +297,13 @@ pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     }
 }
 
-/// Generate test report in JUnit XML report format.
+/// Generate test report in `JUnit` XML report format.
 pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
-    let mut total_duration = Duration::default();
+    let total_duration: Duration = results.values().map(|suite| suite.duration).sum();
     let mut junit_report = Report::new("Test run");
     junit_report.set_timestamp(Utc::now());
     for (suite_name, suite_result) in results {
         let mut test_suite = TestSuite::new(suite_name);
-        total_duration += suite_result.duration;
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
@@ -314,7 +319,6 @@ pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) 
             test_case.set_time(test_result.duration);
             let mut sys_out = String::new();
             let result_report = test_result.kind.report();
-            use std::fmt::Write;
             write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
             if verbosity >= 2 && !test_result.logs.is_empty() {
                 write!(sys_out, "\\nLogs:\\n").unwrap();

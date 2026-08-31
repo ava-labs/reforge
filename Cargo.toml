@@ -47,6 +47,36 @@ yansi = "1.0"
 [dev-dependencies]
 tempfile = "3"
 
+[lints.clippy]
+# Lower the priority of the lint groups so the specific entries below override them.
+all = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# reforge depends on none of the duplicated crates directly: every one of the
+# ~70 duplicates comes from the vendored foundry/alloy/solar tree, so there is
+# no version for this package to unify.
+multiple_crate_versions = "allow"
+# The CLI arg structs mirror foundry's flags, and `Option<Option<PathBuf>>` is
+# how clap models an optional-value flag such as `--diff [FILE]`.
+option_option = "allow"
+struct_excessive_bools = "allow"
+# Macro rules must match the `Macro` fn-pointer signature, so they cannot drop
+# the `Result` even when they never fail.
+unnecessary_wraps = "allow"
+# These push toward backwards-incompatible signature changes for little gain;
+# firewood allows both for the same reason.
+needless_pass_by_value = "allow"
+unused_self = "allow"
+
+absolute-paths = "warn"
+arithmetic-side-effects = "warn"
+dbg-macro = "warn"
+decimal-literal-representation = "warn"
+exit = "warn"
+get-unwrap = "warn"
+indexing-slicing = "warn"
+
 [patch.crates-io]
 ## solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }

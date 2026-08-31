@@ -7,25 +7,32 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use eyre::Context;
 use forge::cmd::{build::BuildArgs, install};
-use forge_lint::{linter::Linter, sol::SolidityLinter};
+use forge_lint::{
+    linter::Linter,
+    sol::{SolLint, SolidityLinter},
+};
 use foundry_cli::{
     opts::{configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{LoadConfig, cache_local_signatures},
 };
-use foundry_common::{sh_println, sh_warn, shell};
+use foundry_common::{fs::canonicalize_path, sh_println, sh_warn, shell};
 use foundry_compilers::{
-    CompilationError, FileFilter, Language, Project, ProjectCompileOutput, artifacts::SolcLanguage,
-    multi::MultiCompilerLanguage, utils::source_files_iter,
+    CompilationError, FileFilter, Language, Project, ProjectCompileOutput,
+    artifacts::{SolcLanguage, Sources},
+    multi::MultiCompilerLanguage,
+    utils::source_files_iter,
 };
 use foundry_config::{Config, SkipBuildFilters, filter::expand_globs};
+use solar::{interface::Session, sema::Compiler};
 
 use crate::{
     lockfile::{check_foundry_lock_consistency, check_soldeer_lock_consistency},
     project_compiler::ProjectCompiler,
+    testing::expand_macros_with_sources,
 };
 
 /// Builds the project. First it does macro expansion as a preprocessing step
@@ -79,13 +86,7 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
         None if !rules.is_empty() => {
             let paths = project.paths.clone().with_language::<SolcLanguage>();
             let sources = project.paths.read_input_files()?;
-            crate::testing::expand_macros_with_sources(
-                sources,
-                project.root(),
-                Some(&paths),
-                &rules,
-            )
-            .ok()
+            expand_macros_with_sources(sources, project.root(), Some(&paths), &rules).ok()
         }
         None => None,
     };
@@ -98,7 +99,7 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
     }
 
     // Only run the `SolidityLinter` if lint on build and no compilation errors.
-    if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
+    if config.lint.lint_on_build && !output.output().errors.iter().any(CompilationError::is_error) {
         lint(&project, &config, build_args.paths.as_deref(), &mut output, preprocessed_sources)
             .wrap_err("Lint Failed")?;
     }
@@ -110,7 +111,7 @@ fn lint(
     config: &Config,
     files: Option<&[PathBuf]>,
     output: &mut ProjectCompileOutput,
-    preprocessed_sources: Option<foundry_compilers::artifacts::Sources>,
+    preprocessed_sources: Option<Sources>,
 ) -> eyre::Result<()> {
     let format_json = shell::is_json();
     if project.compiler.solc.is_some() && !shell::is_quiet() {
@@ -130,7 +131,7 @@ fn lint(
                         .lint
                         .exclude_lints
                         .iter()
-                        .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
+                        .filter_map(|s| SolLint::try_from(s.as_str()).ok())
                         .collect(),
                 )
             });
@@ -138,11 +139,11 @@ fn lint(
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
             .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
+            .flat_map(canonicalize_path)
             .collect::<Vec<_>>();
 
         let skip = SkipBuildFilters::new(config.skip.clone(), config.root.clone());
-        let curr_dir = std::env::current_dir()?;
+        let curr_dir = env::current_dir()?;
         let input_files = config
             .project_paths::<SolcLanguage>()
             .input_files_iter()
@@ -160,14 +161,14 @@ fn lint(
         if let Some(preprocessed) = preprocessed_sources {
             // Canonicalize preprocessed keys to match those produced by
             // `get_solar_sources_from_compile_output`, which uses `dunce::canonicalize`.
-            let canonicalized: std::collections::BTreeMap<_, _> = preprocessed
+            let canonicalized: BTreeMap<_, _> = preprocessed
                 .into_iter()
                 .filter_map(|(p, s)| {
                     let abs = if p.is_absolute() { p } else { project.root().join(&p) };
-                    std::fs::canonicalize(&abs).ok().map(|cp| (cp, s))
+                    fs::canonicalize(&abs).ok().map(|cp| (cp, s))
                 })
-                .collect::<std::collections::BTreeMap<_, _>>();
-            for (path, source) in solar_sources.input.sources.iter_mut() {
+                .collect::<BTreeMap<_, _>>();
+            for (path, source) in &mut solar_sources.input.sources {
                 if let Some(pre_source) = canonicalized.get(path) {
                     *source = pre_source.clone();
                 }
@@ -182,9 +183,7 @@ fn lint(
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
         // compiler, we should reuse the parser from the project output.
-        let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
-        );
+        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
 
         // Load the solar-compatible sources to the pcx before linting
         compiler.enter_mut(|compiler| {

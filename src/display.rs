@@ -12,6 +12,7 @@ use crate::{Macro, testing::expand_macros};
 
 /// Formats a Solidity source string using the default `forge fmt` config.
 /// Falls back to the original string if formatting fails.
+#[must_use]
 pub fn format_sol(source: &str) -> String {
     forge_fmt::format(source, forge_fmt::FormatterConfig::default())
         .into_ok()
@@ -22,6 +23,11 @@ pub fn format_sol(source: &str) -> String {
 /// the content of every file whose path (relative to `source`) matches `glob`
 /// to stdout. Files are printed in alphabetical order, each preceded by a
 /// header showing its relative path.
+///
+/// # Errors
+///
+/// Returns an error if `glob` is not a valid glob pattern, if macro expansion
+/// fails, or if a matching file cannot be written to stdout.
 pub fn display_expanded(
     source: impl AsRef<Path>,
     glob: &str,
@@ -35,6 +41,11 @@ pub fn display_expanded(
 /// Filters `sources` by `glob` relative to `root` and prints each matching
 /// file's content to stdout in alphabetical order, each preceded by a header
 /// showing its relative path.
+///
+/// # Errors
+///
+/// Returns an error if `glob` is not a valid glob pattern or if a matching
+/// file cannot be written to stdout.
 pub fn display_sources(root: &Path, glob: &str, sources: &Sources) -> eyre::Result<()> {
     let pattern = glob::Pattern::new(glob)?;
 
