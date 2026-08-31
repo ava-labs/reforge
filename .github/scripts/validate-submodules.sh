@@ -12,6 +12,17 @@ allowed=(
   "https://github.com/foundry-rs/foundry"
 )
 
+# --get-regexp, not --get-all: --get-all matches a literal key name, so the
+# pattern silently returned nothing and every URL went unchecked.
+urls=$(git config --file .gitmodules --get-regexp '^submodule\..*\.url$' | cut -d' ' -f2-)
+
+# .gitmodules always declares at least one submodule, so an empty list means
+# the extraction broke rather than that there is nothing to check.
+if [[ -z "$urls" ]]; then
+  echo "error: no submodule URLs found in .gitmodules" >&2
+  exit 1
+fi
+
 while IFS= read -r url; do
   ok=false
   for a in "${allowed[@]}"; do
@@ -21,6 +32,6 @@ while IFS= read -r url; do
     echo "Disallowed submodule URL: $url" >&2
     exit 1
   fi
-done < <(git config --file .gitmodules --get-all submodule.*.url)
+done <<< "$urls"
 
 git submodule update --init --recursive
