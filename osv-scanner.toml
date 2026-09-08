@@ -39,8 +39,12 @@ reason = "jsonwebtoken: JWT algorithm confusion; locked by alloy-rpc-types-engin
 
 [[IgnoredVulns]]
 id = "GHSA-xwfj-jgwm-7wp5"
-reason = "tracing-subscriber 0.2.x: CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade; locked by foundry transitive dep; not present in reforge's compiled dependency graph"
+reason = "tracing-subscriber 0.2.x: alias for RUSTSEC-2025-0055; same rationale applies"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0253"
 reason = "lru: fix requires semver-breaking 0.18.x upgrade; locked by alloy-provider ^0.16 inside vendored foundry; cannot upgrade without modifying foundry's Cargo.toml"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0172"
+reason = "zip-extract: unmaintained; locked by soldeer-core in foundry submodule; no security vulnerability, maintenance-only advisory"

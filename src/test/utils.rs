@@ -10,9 +10,7 @@
 use std::{collections::BTreeMap, fmt, time::Duration};
 
 use chrono::Utc;
-use comfy_table::{
-    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
-};
+use comfy_table::{Cell, Color, Row, Table, presets::ASCII_MARKDOWN};
 use forge::{
     MultiContractRunner,
     decode::decode_console_logs,
@@ -80,9 +78,9 @@ impl TestSummaryReport {
     fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_MARKDOWN.with_rounded_corners());
         }
         let mut row = Row::from(vec![
             Cell::new("Test Suite"),
@@ -132,9 +130,9 @@ pub fn format_invariant_metrics_table(
 ) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_MARKDOWN.with_rounded_corners());
     }
     table.set_header(vec![
         Cell::new("Contract"),
