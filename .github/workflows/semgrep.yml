@@ -4,8 +4,7 @@
 name: Semgrep
 on:
   push:
-    branches-ignore:
-      - "dependabot/**"
+    branches: [main]
   pull_request:
 
 permissions:

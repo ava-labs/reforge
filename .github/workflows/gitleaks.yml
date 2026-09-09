@@ -2,7 +2,6 @@
 # See the file LICENSE for licensing terms.
 
 name: Secret scanning
-
 on:
   push:
     branches: [main]
@@ -20,6 +19,9 @@ jobs:
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
+
+    if: (github.actor != 'dependabot[bot]')
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
