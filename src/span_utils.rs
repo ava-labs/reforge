@@ -9,6 +9,56 @@ use std::{
 
 use foundry_compilers::artifacts::Sources;
 
+/// Byte offset of the source-map position `pos` within the file that starts at `file_start`.
+///
+/// Solar spans carry positions in a *global* source map, so the offset within an individual
+/// file is the difference between the two.
+#[must_use]
+pub fn file_offset(pos: u32, file_start: u32) -> usize {
+    usize::try_from(pos.saturating_sub(file_start)).unwrap_or(usize::MAX)
+}
+
+/// 1-based line and column of byte offset `end` within `text`.
+///
+/// Both are computed from the prefix ending at `end`, without slicing, so an offset past the
+/// end of `text` or off a character boundary cannot panic.
+#[must_use]
+pub fn line_col_at(text: &str, end: usize) -> (usize, usize) {
+    let line = newlines_before(text, end).saturating_add(1);
+    let line_start =
+        text.bytes().take(end).rposition(|b| b == b'\n').map_or(0, |i| i.saturating_add(1));
+    let col = end.saturating_sub(line_start).saturating_add(1);
+    (line, col)
+}
+
+/// Counts the newlines in `text`.
+fn newlines(text: &str) -> usize {
+    text.bytes().filter(|&b| b == b'\n').count()
+}
+
+/// Counts the newlines in the first `end` bytes of `text`.
+///
+/// Takes a prefix of the byte iterator rather than slicing, so an `end` that is past the end of
+/// `text` or not on a character boundary cannot panic.
+fn newlines_before(text: &str, end: usize) -> usize {
+    text.bytes().take(end).filter(|&b| b == b'\n').count()
+}
+
+/// Widens a `usize` to `isize`, saturating rather than wrapping.
+pub(crate) fn to_isize(value: usize) -> isize {
+    isize::try_from(value).unwrap_or(isize::MAX)
+}
+
+/// Narrows a signed 1-based line number back to `usize`, clamping to the first line.
+fn to_line(value: isize) -> usize {
+    usize::try_from(value.max(1)).unwrap_or(1)
+}
+
+/// Computes `lhs - rhs` as a signed delta, saturating rather than wrapping.
+fn signed_delta(lhs: usize, rhs: usize) -> isize {
+    to_isize(lhs).saturating_sub(to_isize(rhs))
+}
+
 /// An original source location to which a macro-generated span can be attributed.
 #[derive(Debug, Clone)]
 pub struct MacroOriginalLocation {
@@ -90,6 +140,7 @@ impl<'a> AdjustmentEntry<'a> {
     /// Attaches macro attribution to this edit. `name` identifies the macro rule;
     /// `original_loc` optionally points back to the location in the original source that
     /// triggered the generation, for more precise error reporting.
+    #[must_use]
     pub fn with(self, name: &'a str, original_loc: Option<MacroOriginalLocation>) -> Self {
         Self { name: Some(name), original_loc, ..self }
     }
@@ -101,6 +152,10 @@ impl<'a> AdjustmentEntry<'a> {
     /// `original_offset` must be a byte offset derived from a Solar HIR span (i.e. relative to
     /// the unmodified source). The method translates it to the current position in the
     /// already-modified text before performing the insertion.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn insert(self, original_offset: usize) -> EditInfo {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
@@ -109,7 +164,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_offset, content.as_str(), text, "");
         content.insert_str(adjusted, text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(str::to_string);
             adj.original_location = original_loc;
         }
         info
@@ -122,6 +177,10 @@ impl<'a> AdjustmentEntry<'a> {
     /// Both range endpoints are translated through any previously recorded adjustments before the
     /// replacement is applied. Does nothing and returns `None` if `original_range` is empty or
     /// inverted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn replace(self, original_range: Range<usize>) -> Option<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
@@ -136,7 +195,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_range.start, content.as_str(), text, &removed);
         content.replace_range(adjusted_start..adjusted_end, text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(str::to_string);
             adj.original_location = original_loc;
         }
         Some(info)
@@ -153,7 +212,7 @@ impl OffsetAdjustment {
             .filter(|(p, a)| p == path && a.original_offset <= edit_offset)
             .map(|(_, a)| a.delta_offset)
             .sum();
-        (edit_offset as isize + delta) as usize
+        edit_offset.saturating_add_signed(delta)
     }
 
     /// Records an edit in `path` at `original_offset` in the original source and returns the
@@ -174,17 +233,15 @@ impl OffsetAdjustment {
         removed: &str,
     ) -> (usize, EditInfo) {
         let adjusted_offset = self.adjusted_offset(path, original_offset);
-        let current_line =
-            source[..adjusted_offset].bytes().filter(|&b| b == b'\n').count() as isize + 1;
+        let current_line = to_isize(newlines_before(source, adjusted_offset)).saturating_add(1);
         let accumulated_line_delta: isize = self
             .iter()
             .filter(|(p, a)| p.as_path() == path && a.original_offset <= original_offset)
             .map(|(_, a)| a.delta_line)
             .sum();
-        let original_line = (current_line - accumulated_line_delta) as usize;
-        let delta_offset = added.len() as isize - removed.len() as isize;
-        let delta_line = added.bytes().filter(|&b| b == b'\n').count() as isize
-            - removed.bytes().filter(|&b| b == b'\n').count() as isize;
+        let original_line = to_line(current_line.saturating_sub(accumulated_line_delta));
+        let delta_offset = signed_delta(added.len(), removed.len());
+        let delta_line = signed_delta(newlines(added), newlines(removed));
         self.push((
             path.to_path_buf(),
             Adjustment {
@@ -211,12 +268,12 @@ impl OffsetAdjustment {
     pub fn get_original_line(&self, source: &Path, line: isize) -> usize {
         let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
+            let expanded_pos = to_isize(adj.original_line).saturating_add(accumulated_delta);
             if expanded_pos < line {
-                accumulated_delta += adj.delta_line;
+                accumulated_delta = accumulated_delta.saturating_add(adj.delta_line);
             }
         }
-        (line - accumulated_delta) as usize
+        to_line(line.saturating_sub(accumulated_delta))
     }
 
     /// Returns the adjustment whose expanded line range covers `line` in `source`, if any.
@@ -226,11 +283,11 @@ impl OffsetAdjustment {
     pub fn find_macro_adjustment(&self, source: &Path, line: isize) -> Option<&Adjustment> {
         let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
-            if expanded_pos <= line && line < expanded_pos + adj.delta_line {
+            let expanded_pos = to_isize(adj.original_line).saturating_add(accumulated_delta);
+            if expanded_pos <= line && line < expanded_pos.saturating_add(adj.delta_line) {
                 return Some(adj);
             }
-            accumulated_delta += adj.delta_line;
+            accumulated_delta = accumulated_delta.saturating_add(adj.delta_line);
         }
         None
     }
@@ -276,14 +333,14 @@ mod tests {
     #[test]
     fn test_record() {
         let adj = setup();
-        assert_eq!(adj.len(), 2);
-        let (path, adjustment) = &adj[0];
+        let [(path, adjustment), (path2, adj2)] = adj.as_slice() else {
+            panic!("expected 2 adjustments, got {}", adj.len());
+        };
         assert_eq!(path, Path::new("foo.sol"));
         assert_eq!(adjustment.original_offset, 16);
         assert_eq!(adjustment.original_line, 2);
         assert_eq!(adjustment.delta_offset, 28);
         assert_eq!(adjustment.delta_line, 3);
-        let (path2, adj2) = &adj[1];
         assert_eq!(path2, Path::new("foo.sol"));
         assert_eq!(adj2.original_offset, 16);
         assert_eq!(adj2.original_line, 2);
@@ -317,8 +374,9 @@ mod tests {
         let (offset, _) = adj.record(Path::new("foo.sol"), 15, src, added, removed);
         assert_eq!(offset, 15);
 
-        assert_eq!(adj.len(), 1);
-        let (path, adjustment) = &adj[0];
+        let [(path, adjustment)] = adj.as_slice() else {
+            panic!("expected 1 adjustment, got {}", adj.len());
+        };
         assert_eq!(path, Path::new("foo.sol"));
         assert_eq!(adjustment.original_offset, 15);
         assert_eq!(adjustment.original_line, 2);

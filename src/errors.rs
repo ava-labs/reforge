@@ -1,14 +1,16 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
-use std::path::Path;
+#[cfg(test)]
+use std::sync::Mutex;
+use std::{fs, path::Path};
 
 use foundry_compilers::artifacts::Error as SolcError;
 
-use crate::{MacroOriginalLocation, MacroRules};
+use crate::{MacroOriginalLocation, MacroRules, span_utils::to_isize};
 
 #[cfg(test)]
-pub static TEST_COMPILER_OUTPUT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static TEST_COMPILER_OUTPUT: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 const ARROW: &str = "-->";
 
@@ -174,7 +176,7 @@ fn framed_line(line: &str) -> Option<usize> {
 fn remap_framed_line(macros: &MacroRules, source: &Path, line: &str) -> String {
     let Some(line_num) = framed_line(line) else { return line.to_string() };
     let adjustments = macros.offset_adjustments.lock().unwrap();
-    let remapped = adjustments.get_original_line(source, line_num as isize);
+    let remapped = adjustments.get_original_line(source, to_isize(line_num));
     drop(adjustments);
     let (prefix, rest) = line.split_once('|').unwrap();
     let field_width = prefix.trim_end().len();
@@ -193,9 +195,9 @@ fn remap_framed_line(macros: &MacroRules, source: &Path, line: &str) -> String {
 ///
 /// Falls back to `short_msg` alone if the source line cannot be read.
 fn format_macro_fmt_msg(orig: &MacroOriginalLocation, short_msg: &str) -> String {
-    let source_line = std::fs::read_to_string(&orig.file)
-        .ok()
-        .and_then(|content| content.lines().nth(orig.line - 1).map(|l| l.to_string()));
+    let source_line = fs::read_to_string(&orig.file).ok().and_then(|content| {
+        content.lines().nth(orig.line.saturating_sub(1)).map(ToString::to_string)
+    });
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);
     let width = orig.line.to_string().len();
     let sep = format!("{:width$} |", "");
@@ -210,9 +212,16 @@ fn format_macro_fmt_msg(orig: &MacroOriginalLocation, short_msg: &str) -> String
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
+    use foundry_compilers::error::Result as SolcResult;
     use solar::sema::{Gcx, hir::ContractKind};
 
-    use crate::{Macro, MacroOriginalLocation, PreprocessingData};
+    use crate::{
+        Macro, MacroOriginalLocation, PreprocessingData,
+        project_compiler::ProjectCompiler,
+        span_utils::{file_offset, line_col_at},
+    };
 
     /// Strips ANSI escape sequences from `s` so assertions can match plain text.
     fn strip_ansi(s: &str) -> String {
@@ -280,7 +289,7 @@ mod tests {
     }
 
     /// Returns the path of the source file that declares `library Foo`, if present.
-    fn foo_source_path(data: &PreprocessingData<'_>) -> Option<std::path::PathBuf> {
+    fn foo_source_path(data: &PreprocessingData<'_>) -> Option<PathBuf> {
         data.input
             .iter()
             .find(|(_, s)| s.content.as_str().contains("library Foo"))
@@ -291,21 +300,16 @@ mod tests {
     /// returns a string literal (a `uint256` type error). Because the replacement spans more
     /// lines than it removes, the error lands *inside* the macro-generated span and must be
     /// attributed to the macro rather than remapped to original source.
-    fn replace_body(
-        _ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn replace_body(_ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         const BODY: &str = "{ return 1; }";
         let Some(path) = foo_source_path(data) else { return Ok(()) };
         let (range, loc) = {
             let content = data.input.get(&path).unwrap().content.as_str();
             let Some(start) = content.find(BODY) else { return Ok(()) };
             let trigger = content.find("// #[replace_body]").unwrap_or(start);
-            let before = &content[..trigger];
-            let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-            let col = trigger - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            let (line, col) = line_col_at(content, trigger);
             let loc = MacroOriginalLocation { file: path.clone(), line, col };
-            (start..start + BODY.len(), loc)
+            (start..start.saturating_add(BODY.len()), loc)
         };
         let replacement = "{\n        return \"bad\";\n    }";
         data.entry(&path, replacement).with("replace_body", Some(loc)).replace(range);
@@ -315,10 +319,7 @@ mod tests {
     /// Removes the `// #[remove_me]` comment and the whole `toRemove()` function, deleting four
     /// lines and shifting everything below it up. Used to exercise line-number remapping of a
     /// compiler error that lives in surviving original source below a removal.
-    fn remove_block(
-        _ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn remove_block(_ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         let Some(path) = foo_source_path(data) else { return Ok(()) };
         let range = {
             let content = data.input.get(&path).unwrap().content.as_str();
@@ -330,17 +331,11 @@ mod tests {
         Ok(())
     }
 
-    fn insert_foo(
-        ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn insert_foo(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         insert_in_foo(ctx, data, "insert_foo", false)
     }
 
-    fn insert_foo_fail(
-        ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn insert_foo_fail(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         insert_in_foo(ctx, data, "insert_foo_fail", true)
     }
 
@@ -349,7 +344,7 @@ mod tests {
         data: &mut PreprocessingData<'_>,
         macro_name: &str,
         fail: bool,
-    ) -> foundry_compilers::error::Result<()> {
+    ) -> SolcResult<()> {
         for contract in ctx.hir.contracts() {
             if contract.kind != ContractKind::Library || contract.name.name.as_str() != "Foo" {
                 continue;
@@ -360,18 +355,16 @@ mod tests {
                 continue;
             }
 
-            let start = (contract.span.lo().0 - source.file.start_pos.0) as usize;
+            let start = file_offset(contract.span.lo().0, source.file.start_pos.0);
             let (after_open_brace, original_loc) = {
                 let content = data.input.get(path).unwrap().content.as_str();
                 let Some(rel) = content[start..].find('{') else { continue };
                 // Use the trigger comment as the attribution location, falling back to the
                 // library declaration if the comment is not found.
                 let trigger_offset = content.find("// #[insert_foo]").unwrap_or(start);
-                let before = &content[..trigger_offset];
-                let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-                let col = trigger_offset - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+                let (line, col) = line_col_at(content, trigger_offset);
                 let loc = MacroOriginalLocation { file: path.to_path_buf(), line, col };
-                (start + rel + 1, loc)
+                (start.saturating_add(rel).saturating_add(1), loc)
             };
 
             let func = if fail {
@@ -393,9 +386,9 @@ mod tests {
     fn compile_source_with(source: &str, rule: Macro) -> eyre::Result<()> {
         let dir = tempfile::tempdir()?;
         let src_dir = dir.path().join("src");
-        std::fs::create_dir(&src_dir)?;
+        fs::create_dir(&src_dir)?;
         let sol_path = src_dir.join("Foo.sol");
-        std::fs::write(&sol_path, source)?;
+        fs::write(&sol_path, source)?;
 
         let config = foundry_config::Config::with_root(dir.path());
         let project = config.project()?;
@@ -403,7 +396,7 @@ mod tests {
         let mut macros = crate::MacroRules::default();
         macros.rules.push(rule);
 
-        crate::project_compiler::ProjectCompiler {
+        ProjectCompiler {
             project_root: project.root().to_path_buf(),
             print_names: false,
             print_sizes: false,
