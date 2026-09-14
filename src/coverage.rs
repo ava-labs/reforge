@@ -129,12 +129,12 @@ impl CoverageArgs {
 
         // Keep a handle to the sources produced by macro expansion so the source
         // analysis can be run against the expanded code rather than the originals.
-        let preprocessed_sources = macros.preprocessed_sources.clone();
+        let preprocessed = macros.preprocessed.clone();
         let (paths, mut output) = {
             let (project, output) = self.build(&config, macros)?;
             (project.paths, output)
         };
-        let preprocessed_sources = preprocessed_sources.lock().unwrap().take();
+        let preprocessed_sources = preprocessed.lock().unwrap().take().map(|p| p.sources);
 
         self.populate_reporters(&paths.root);
 
@@ -531,3 +531,4 @@ pub fn parse_from_env() -> CoverageArgs {
         CoverageSub::Coverage(args) => args,
     }
 }
+
