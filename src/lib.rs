@@ -160,12 +160,38 @@ impl<'pre> PreprocessingData<'pre> {
     }
 }
 
+/// The sources and accumulated offset adjustments produced by the most recent macro
+/// preprocessing pass.
+///
+/// These are always populated together: offset adjustments are only meaningful relative to
+/// the expanded sources they were computed from. Kept as a single struct behind one
+/// `Arc<Mutex<Option<_>>>` on [`MacroRules`] so they can't drift apart -- see #29.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct PreprocessedOutput {
+    pub(crate) sources: Sources,
+    pub(crate) offset_adjustments: OffsetAdjustment,
+}
+
 /// A collection of macro rules which will be executed as a `Preprocessor`
 #[derive(Default, Clone)]
 pub struct MacroRules {
     pub rules: Vec<Macro>,
-    pub(crate) preprocessed_sources: Arc<Mutex<Option<Sources>>>,
-    pub(crate) offset_adjustments: Arc<Mutex<OffsetAdjustment>>,
+    pub(crate) preprocessed: Arc<Mutex<Option<PreprocessedOutput>>>,
+}
+
+impl MacroRules {
+    /// Runs `f` with the offset adjustments from the most recent preprocessing pass.
+    ///
+    /// If preprocessing hasn't produced output yet, or it has already been taken (see
+    /// [`PreprocessedOutput`]), `f` runs against an empty [`OffsetAdjustment`], which is a safe
+    /// default: every lookup on it simply finds no adjustment.
+    pub(crate) fn with_offset_adjustments<R>(&self, f: impl FnOnce(&OffsetAdjustment) -> R) -> R {
+        let guard = self.preprocessed.lock().unwrap();
+        match &*guard {
+            Some(preprocessed) => f(&preprocessed.offset_adjustments),
+            None => f(&OffsetAdjustment::default()),
+        }
+    }
 }
 
 impl Debug for MacroRules {
@@ -308,9 +334,10 @@ impl Preprocessor<SolcCompiler> for MacroRules {
             for rule in &self.rules {
                 rule(&gcx, &mut prepocessing_data)?;
             }
-            *self.preprocessed_sources.lock().unwrap() = Some(prepocessing_data.input.clone());
-            *self.offset_adjustments.lock().unwrap() =
-                std::mem::take(&mut prepocessing_data.offset_adjustments);
+            *self.preprocessed.lock().unwrap() = Some(PreprocessedOutput {
+                sources: prepocessing_data.input.clone(),
+                offset_adjustments: std::mem::take(&mut prepocessing_data.offset_adjustments),
+            });
             Ok(())
         })?;
 
