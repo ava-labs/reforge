@@ -1,0 +1,122 @@
+# Copyright (C) 2026, Ava Labs, Inc.
+# See the file LICENSE for licensing terms.
+
+name: PR Reminder
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'  # 09:00 UTC, weekdays
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+            const now = Date.now();
+            const REMINDER_TAG = '<!-- pr-reminder -->';
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            for (const pr of prs) {
+              // Draft is the author's explicit signal to stop nagging.
+              if (pr.draft) continue;
+
+              // Collect the latest review state per reviewer (ignoring COMMENTED).
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+
+              const latestByReviewer = {};
+              for (const review of reviews) {
+                if (review.state === 'COMMENTED') continue;
+                const prev = latestByReviewer[review.user.login];
+                if (!prev || new Date(review.submitted_at) > new Date(prev.submitted_at)) {
+                  latestByReviewer[review.user.login] = review;
+                }
+              }
+
+              const changesRequested = Object.values(latestByReviewer)
+                .filter(r => r.state === 'CHANGES_REQUESTED');
+
+              if (changesRequested.length === 0) continue;
+
+              // The most recent "changes requested" review.
+              const reviewedAt = Math.max(
+                ...changesRequested.map(r => new Date(r.submitted_at).getTime())
+              );
+
+              // The most recent commit by the author (0 if they haven't pushed since the review).
+              const { data: commits } = await github.rest.pulls.listCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+
+              const authorCommitTimes = commits
+                .filter(c => c.author?.login === pr.user.login)
+                .map(c => new Date(c.commit.committer.date).getTime());
+              const lastAuthorCommitAt = authorCommitTimes.length > 0
+                ? Math.max(...authorCommitTimes)
+                : 0;
+
+              // Clock starts from whichever is more recent: the review or the last author commit.
+              // This way a new commit resets the week, but reminders keep firing until the author
+              // either re-requests review (ball moves to reviewer) or converts to draft.
+              const clockStart = Math.max(reviewedAt, lastAuthorCommitAt);
+
+              if (now - clockStart < ONE_WEEK_MS) continue;
+
+              // If the author re-requested review after the clock started, the ball is in the
+              // reviewer's court — don't nag the author.
+              const { data: timeline } = await github.rest.issues.listEventsForTimeline({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+
+              const authorReRequestedReview = timeline.some(e =>
+                e.event === 'review_requested' &&
+                e.actor?.login === pr.user.login &&
+                new Date(e.created_at).getTime() > clockStart
+              );
+              if (authorReRequestedReview) continue;
+
+              // Skip if we already left a reminder in the past week.
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+              });
+
+              const alreadyReminded = comments.some(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes(REMINDER_TAG) &&
+                now - new Date(c.created_at).getTime() < ONE_WEEK_MS
+              );
+              if (alreadyReminded) continue;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `${REMINDER_TAG}\n@${pr.user.login} This PR has had unaddressed review feedback for over a week. Please push changes and re-request review, or convert to draft if this isn't ready yet.`,
+              });
+
+              core.info(`Reminded @${pr.user.login} on PR #${pr.number}`);
+            }
