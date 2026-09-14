@@ -531,4 +531,3 @@ pub fn parse_from_env() -> CoverageArgs {
         CoverageSub::Coverage(args) => args,
     }
 }
-
