@@ -34,7 +34,7 @@ pub enum ErrorSource {
 ///
 /// Attribution and remapping are driven by `source_location.start`, the byte offset Solc
 /// reports for the primary span.
-pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError) {
+pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError, project_root: &Path) {
     let Some(ref loc) = e.source_location else { return };
     if loc.start < 0 {
         return;
@@ -59,14 +59,15 @@ pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError) {
                 None => format!("error in macro-generated code: {}", e.message),
             };
             let fmt = match (name, loc.as_ref()) {
-                (Some(_), Some(orig)) => format_macro_fmt_msg(orig, &short),
+                (Some(_), Some(orig)) => format_macro_fmt_msg(orig, &short, project_root),
                 _ => short.clone(),
             };
             e.message = short;
             e.formatted_message = Some(fmt);
         }
         ErrorSource::RawSource { loc: original_start } if original_start != expanded_start => {
-            e.formatted_message = Some(render_remapped_frame(source, original_start, &e.message));
+            e.formatted_message =
+                Some(render_remapped_frame(source, original_start, &e.message, project_root));
         }
         ErrorSource::RawSource { .. } => {}
     }
@@ -87,8 +88,14 @@ fn offset_to_line_col(content: &str, offset: usize) -> (usize, usize) {
 /// Reads the source file from disk (the original, unmodified version) to extract the
 /// relevant source line for the frame. Falls back to the bare message if the file cannot
 /// be read or the line is out of range.
-fn render_remapped_frame(source: &Path, original_offset: usize, message: &str) -> String {
-    let Ok(content) = std::fs::read_to_string(source) else {
+fn render_remapped_frame(
+    source: &Path,
+    original_offset: usize,
+    message: &str,
+    project_root: &Path,
+) -> String {
+    let abs = if source.is_absolute() { source.to_path_buf() } else { project_root.join(source) };
+    let Ok(content) = std::fs::read_to_string(&abs) else {
         return message.to_string();
     };
     let (line, col) = offset_to_line_col(&content, original_offset);
@@ -115,8 +122,14 @@ fn render_remapped_frame(source: &Path, original_offset: usize, message: &str) -
 /// ```
 ///
 /// Falls back to `short_msg` alone if the source line cannot be read.
-fn format_macro_fmt_msg(orig: &MacroOriginalLocation, short_msg: &str) -> String {
-    let source_line = std::fs::read_to_string(&orig.file)
+fn format_macro_fmt_msg(
+    orig: &MacroOriginalLocation,
+    short_msg: &str,
+    project_root: &Path,
+) -> String {
+    let abs_file =
+        if orig.file.is_absolute() { orig.file.clone() } else { project_root.join(&orig.file) };
+    let source_line = std::fs::read_to_string(&abs_file)
         .ok()
         .and_then(|content| content.lines().nth(orig.line - 1).map(|l| l.to_string()));
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);

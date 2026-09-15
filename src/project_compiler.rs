@@ -59,9 +59,9 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
-        // Clone the Arc before moving preprocessor into the closure so we can remap
-        // error line numbers after compilation.
+        // Clone these before `self` is moved into `compile_with`.
         let macros = preprocessor.clone();
+        let project_root = self.project_root.clone();
         self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
@@ -79,7 +79,7 @@ impl ProjectCompiler {
             // Remap solc error line numbers from expanded source back to original source.
             for error in output.output_mut().errors.iter_mut() {
                 if let MultiCompilerError::Solc(e) = error {
-                    crate::errors::correct_fmt_msg(&macros, e);
+                    crate::errors::correct_fmt_msg(&macros, e, &project_root);
                 }
             }
 
