@@ -14,10 +14,6 @@ id = "RUSTSEC-2026-0195"
 reason = "quick-xml: reader-side DoS; reforge only writes XML/SVG, never calls Reader/NsReader"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0104"
-reason = "rustls-webpki: requires RevocationOptions + attacker-controlled CRLs; default config unaffected"
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0173"
 reason = "proc-macro-error2: compile-time proc-macro only, no runtime surface; transitively required by foundry"
 

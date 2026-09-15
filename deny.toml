@@ -11,10 +11,6 @@ ignore = [
     { id = "RUSTSEC-2026-0194", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
     { id = "RUSTSEC-2026-0195", reason = "reader-side DoS; reforge only writes XML, never calls Reader/NsReader" },
 
-    # rustls-webpki: requires RevocationOptions + attacker-controlled CRLs.
-    # Default rustls config does not enable CRL checking; path is unreachable.
-    { id = "RUSTSEC-2026-0104", reason = "requires RevocationOptions + attacker-controlled CRLs; default config unaffected" },
-
     # proc-macro-error2: unmaintained. Compile-time proc-macro crate only —
     # no runtime attack surface. Transitively required by foundry.
     { id = "RUSTSEC-2026-0173", reason = "compile-time proc-macro, no runtime surface; transitively required by foundry" },
