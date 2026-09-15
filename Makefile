@@ -49,6 +49,7 @@ build:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test:
+	cargo test
 	cargo run --example macros -- test --root sample_proj
 
 coverage:
