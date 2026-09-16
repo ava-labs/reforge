@@ -110,7 +110,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = crate::test::compile_and_run(&mut self.test, macros).await?;
+        let outcome = crate::test::compile_and_run(&self.test, macros).await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 

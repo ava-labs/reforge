@@ -352,7 +352,7 @@ impl Provider for TestArgs {
 /// This mirrors [`TestArgs::compile_and_run`], but compiles through reforge's macro-aware
 /// [`ProjectCompiler`]. It is shared by the `test` and `snapshot` subcommands.
 pub(crate) async fn compile_and_run(
-    test_args: &mut TestArgs,
+    test_args: &TestArgs,
     macros: crate::MacroRules,
 ) -> eyre::Result<TestOutcome> {
     let (mut config, evm_opts) = test_args.load_config_and_evm_opts()?;
@@ -393,15 +393,15 @@ pub(crate) async fn compile_and_run(
     Ok(outcome)
 }
 
-pub async fn test(mut test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
+pub async fn test(test_args: TestArgs, macros: crate::MacroRules) -> eyre::Result<()> {
     let silent = test_args.junit || shell::is_json();
-    let outcome = compile_and_run(&mut test_args, macros).await?;
+    let outcome = compile_and_run(&test_args, macros).await?;
     outcome.ensure_ok(silent)
 }
 
 /// Executes all the tests in the project.
 pub async fn run_tests(
-    args: &mut TestArgs,
+    args: &TestArgs,
     project_root: &Path,
     mut config: Config,
     mut evm_opts: EvmOpts,
@@ -471,7 +471,7 @@ pub async fn run_tests(
 
     let libraries = runner.libraries.clone();
     let mut outcome =
-        run_tests_inner(args, runner, config.clone(), verbosity, &filter, output).await?;
+        run_tests_inner(args, runner, config.clone(), verbosity, &filter, output, decode_internal).await?;
 
     if let Some(draw_mode @ (SingleTestMode::Flamegraph | SingleTestMode::Flamechart)) = mode {
         let (suite_name, test_name, mut test_result) =
@@ -547,6 +547,7 @@ async fn run_tests_inner(
     verbosity: u8,
     filter: &ProjectPathsAwareFilter,
     output: &ProjectCompileOutput,
+    decode_internal: InternalTraceMode,
 ) -> eyre::Result<TestOutcome> {
     if args.list {
         return list_tests(runner, filter);
@@ -591,7 +592,7 @@ async fn run_tests_inner(
         );
     }
 
-    if num_filtered == 1 && args.decode_internal {
+    if num_filtered == 1 && decode_internal != InternalTraceMode::None {
         runner.decode_internal = InternalTraceMode::Full;
     }
 
@@ -646,7 +647,7 @@ async fn run_tests_inner(
         builder = builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
     }
 
-    if args.decode_internal {
+    if decode_internal != InternalTraceMode::None {
         let sources = ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
         builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
     }
