@@ -251,23 +251,9 @@ pub fn create_silent_solar_analysis(
     sources: &foundry_compilers::artifacts::Sources,
 ) -> eyre::Result<solar::sema::Compiler> {
     let session = solar::interface::Session::builder().with_silent_emitter(None).build();
-    let mut analysis = solar::sema::Compiler::new(session);
-    analysis
-        .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
-            let mut pcx = compiler.parse();
-            for (path, src) in sources.iter() {
-                if let Ok(src_file) =
-                    compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
-                {
-                    pcx.add_file(src_file);
-                }
-            }
-            pcx.parse();
-            let _ = compiler.lower_asts();
-            Ok(())
-        })
-        .map_err(|e| eyre::eyre!("{e}"))?;
-    Ok(analysis)
+    let mut compiler = solar::sema::Compiler::new(session);
+    crate::solar_load_and_lower(&mut compiler, sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())));
+    Ok(compiler)
 }
 
 /// Lists all matching tests.
