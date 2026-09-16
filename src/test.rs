@@ -12,6 +12,7 @@ mod utils;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
     time::Instant,
@@ -218,7 +219,42 @@ pub struct TestArgs {
     pub watch: WatchArgs,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SingleTestMode {
+    Debug,
+    Flamegraph,
+    Flamechart,
+}
+
+impl SingleTestMode {
+    fn is_draw(self) -> bool {
+        matches!(self, Self::Flamegraph | Self::Flamechart)
+    }
+}
+
+impl fmt::Display for SingleTestMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Debug => "run the debugger",
+            Self::Flamegraph => "generate a flamegraph",
+            Self::Flamechart => "generate a flamechart",
+        })
+    }
+}
+
 impl TestArgs {
+    fn single_test_mode(&self) -> Option<SingleTestMode> {
+        if self.debug {
+            Some(SingleTestMode::Debug)
+        } else if self.flamegraph {
+            Some(SingleTestMode::Flamegraph)
+        } else if self.flamechart {
+            Some(SingleTestMode::Flamechart)
+        } else {
+            None
+        }
+    }
+
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     /// Loads and applies filter from file if only last test run failures should be re-run.
     pub fn filter(&self, config: &Config) -> eyre::Result<ProjectPathsAwareFilter> {
@@ -383,22 +419,20 @@ pub async fn run_tests(
         config.invariant.gas_report_samples = 0;
     }
 
-    let should_debug = args.debug;
-    let should_draw = args.flamegraph || args.flamechart;
+    let mode = args.single_test_mode();
 
     let verbosity = evm_opts.verbosity;
-    if (args.gas_report && evm_opts.verbosity < 3) || args.flamegraph || args.flamechart {
+    if (args.gas_report && evm_opts.verbosity < 3) || mode.is_some_and(|m| m.is_draw()) {
         evm_opts.verbosity = 3;
     }
 
     let env = evm_opts.evm_env().await?;
 
-    if should_draw && !args.decode_internal {
-        args.decode_internal = true;
-    }
-
-    let decode_internal =
-        if args.decode_internal { InternalTraceMode::Simple } else { InternalTraceMode::None };
+    let decode_internal = if args.decode_internal || mode.is_some_and(|m| m.is_draw()) {
+        InternalTraceMode::Simple
+    } else {
+        InternalTraceMode::None
+    };
 
     let config = Arc::new(config);
 
@@ -407,7 +441,7 @@ pub async fn run_tests(
     // once the runner analysis is replaced below with one that uses the expanded sources.
     let mut runner = suppress_stderr(|| {
         MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
+            .set_debug(mode == Some(SingleTestMode::Debug))
             .set_decode_internal(decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
@@ -439,7 +473,7 @@ pub async fn run_tests(
     let mut outcome =
         run_tests_inner(args, runner, config.clone(), verbosity, &filter, output).await?;
 
-    if should_draw {
+    if let Some(draw_mode @ (SingleTestMode::Flamegraph | SingleTestMode::Flamechart)) = mode {
         let (suite_name, test_name, mut test_result) =
             outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
@@ -450,7 +484,10 @@ pub async fn run_tests(
         decode_trace_arena(arena, decoder).await;
         let mut fst = folded_stack_trace::build(arena);
 
-        let label = if args.flamegraph { "flamegraph" } else { "flamechart" };
+        let label = match draw_mode {
+            SingleTestMode::Flamegraph => "flamegraph",
+            _ => "flamechart",
+        };
         let contract = suite_name.split(':').next_back().unwrap();
         let test_name = test_name.trim_end_matches("()");
         let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
@@ -460,7 +497,7 @@ pub async fn run_tests(
         let mut options = inferno::flamegraph::Options::default();
         options.title = format!("{label} {contract}::{test_name}");
         options.count_name = "gas".to_string();
-        if args.flamechart {
+        if matches!(draw_mode, SingleTestMode::Flamechart) {
             options.flame_chart = true;
             fst.reverse();
         }
@@ -474,7 +511,7 @@ pub async fn run_tests(
         }
     }
 
-    if should_debug {
+    if mode == Some(SingleTestMode::Debug) {
         let (_, _, test_result) = outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
         let sources = ContractSources::from_project_output(output, project_root, Some(&libraries))?;
@@ -545,18 +582,11 @@ async fn run_tests_inner(
         return Ok(TestOutcome::empty(Some(runner), false));
     }
 
-    if num_filtered != 1 && (args.debug || args.flamegraph || args.flamechart) {
-        let action = if args.flamegraph {
-            "generate a flamegraph"
-        } else if args.flamechart {
-            "generate a flamechart"
-        } else {
-            "run the debugger"
-        };
+    if num_filtered != 1 && let Some(mode) = args.single_test_mode() {
         let filter_str =
             if filter.is_empty() { String::new() } else { format!("\n\nFilter used:\n{filter}") };
         eyre::bail!(
-            "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
+            "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {mode}.\n\n\
              Use --match-contract and --match-path to further limit the search.{filter_str}",
         );
     }
@@ -642,7 +672,7 @@ async fn run_tests_inner(
         decoder.clear_addresses();
 
         let identify_addresses =
-            verbosity >= 3 || args.gas_report || args.debug || args.flamegraph || args.flamechart;
+            verbosity >= 3 || args.gas_report || args.single_test_mode().is_some();
 
         if !silent {
             foundry_common::sh_println!()?;
