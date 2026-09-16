@@ -8,6 +8,7 @@ use std::{collections::HashSet, path::Path};
 use foundry_compilers::{
     ProjectPathsConfig, SourceParser,
     artifacts::{SolcLanguage, Source, Sources},
+    utils::source_files_iter,
 };
 use solar::{parse::interface::Session, sema::Compiler};
 
@@ -15,30 +16,8 @@ use crate::{Macro, PreprocessingData};
 
 /// Loads all `.sol` files under `dir` into a `Sources` map keyed by absolute path.
 pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
-    let mut sources = Sources::new();
-    load_sol_sources_recursive(dir, &mut sources)?;
-    Ok(sources)
-}
-
-fn load_sol_sources_recursive(dir: &Path, sources: &mut Sources) -> eyre::Result<()> {
-    if dir.is_file() {
-        if dir.extension().is_some_and(|e| e == "sol") {
-            let src = Source::read(dir).map_err(|e| eyre::eyre!("{e}"))?;
-            sources.insert(dir.to_path_buf(), src);
-        }
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            load_sol_sources_recursive(&path, sources)?;
-        } else if path.extension().is_some_and(|e| e == "sol") {
-            let src = Source::read(&path).map_err(|e| eyre::eyre!("{e}"))?;
-            sources.insert(path, src);
-        }
-    }
-    Ok(())
+    Source::read_all(source_files_iter(dir, SolcLanguage::FILE_EXTENSIONS))
+        .map_err(|e| eyre::eyre!("{e}"))
 }
 
 /// Runs `macro_rules` over the Solidity sources in `source`, then compares the
