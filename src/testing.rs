@@ -63,7 +63,13 @@ pub fn test_macros(
 
     let mut failures: Vec<(std::path::PathBuf, String)> = Vec::new();
     for (actual_path, actual_src) in &sources {
-        let relative_path = actual_path.strip_prefix(source).unwrap();
+        let relative_path = actual_path.strip_prefix(source).map_err(|_| {
+            eyre::eyre!(
+                "expanded source path '{}' is not under source root '{}'",
+                actual_path.display(),
+                source.display()
+            )
+        })?;
         let expected_path = expected.join(relative_path);
         let actual_formatted = crate::display::format_sol(actual_src.content.as_str());
         let matches = expected_sources.get(&expected_path).is_some_and(|exp| {
