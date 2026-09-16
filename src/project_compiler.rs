@@ -176,7 +176,8 @@ impl ProjectCompiler {
 
             for (name, artifact_list) in artifacts {
                 for (path, artifact) in &artifact_list {
-                    let runtime_size = contract_size(*artifact, Bytecode::Runtime).unwrap_or_default();
+                    let runtime_size =
+                        contract_size(*artifact, Bytecode::Runtime).unwrap_or_default();
                     let init_size = contract_size(*artifact, Bytecode::Init).unwrap_or_default();
 
                     let is_dev_contract = artifact
