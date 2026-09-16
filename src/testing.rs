@@ -6,7 +6,7 @@
 use std::{collections::HashSet, path::Path};
 
 use foundry_compilers::{
-    ProjectPathsConfig, SourceParser,
+    Language, ProjectPathsConfig, SourceParser,
     artifacts::{SolcLanguage, Source, Sources},
     utils::source_files_iter,
 };
