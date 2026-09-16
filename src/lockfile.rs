@@ -139,18 +139,11 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
             }
         };
 
-        // Compare with the expected revision from lockfile
-        let expected_rev = match dep_identifier {
-            DepIdentifier::Branch { rev, .. }
-            | DepIdentifier::Tag { rev, .. }
-            | DepIdentifier::Rev { rev, .. } => rev.clone(),
-        };
-
-        if actual_rev != expected_rev {
+        if actual_rev != dep_identifier.rev() {
             sh_warn!(
                 "Dependency '{}' revision mismatch: expected '{}', found '{}'",
                 dep_path.display(),
-                expected_rev,
+                dep_identifier.rev(),
                 actual_rev
             )
             .ok();
