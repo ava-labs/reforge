@@ -725,15 +725,8 @@ async fn run_tests_inner(
                 if identify_addresses {
                     decoder.identify(arena, &mut identifier);
                 }
-                let should_include = match kind {
-                    TraceKind::Execution => {
-                        (verbosity == 3 && result.status.is_failure()) || verbosity >= 4
-                    }
-                    TraceKind::Setup => {
-                        (verbosity == 4 && result.status.is_failure()) || verbosity >= 5
-                    }
-                    TraceKind::Deployment => false,
-                };
+                let should_include =
+                    verbosity >= min_verbosity(*kind, result.status.is_failure());
                 if should_include {
                     decode_trace_arena(arena, &decoder).await;
                     if let Some(trace_depth) = args.trace_depth {
@@ -892,4 +885,16 @@ async fn run_tests_inner(
     persist_run_failures(&config, &outcome);
 
     Ok(outcome)
+}
+
+/// Returns the minimum verbosity level at which traces of `kind` should be shown.
+/// Failures are shown one level earlier than successes.
+fn min_verbosity(kind: TraceKind, failed: bool) -> u8 {
+    match (kind, failed) {
+        (TraceKind::Execution, false) => 4,
+        (TraceKind::Execution, true)  => 3,
+        (TraceKind::Setup,     false) => 5,
+        (TraceKind::Setup,     true)  => 4,
+        (TraceKind::Deployment, _)    => u8::MAX,
+    }
 }
