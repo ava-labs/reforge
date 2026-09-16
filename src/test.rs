@@ -68,8 +68,9 @@ use crate::{
     test::{
         filter::{ProjectPathsAwareFilter, merge_filter_with_config},
         utils::{
-            TestSummaryReport, create_silent_solar_analysis, format_invariant_metrics_table,
-            junit_xml_report, last_run_failures, list_tests, persist_run_failures, suppress_stderr,
+            SuiteId, TestSummaryReport, create_silent_solar_analysis,
+            format_invariant_metrics_table, junit_xml_report, last_run_failures, list_tests,
+            persist_run_failures, suppress_stderr,
         },
     },
 };
@@ -488,7 +489,7 @@ pub async fn run_tests(
             SingleTestMode::Flamegraph => "flamegraph",
             _ => "flamechart",
         };
-        let contract = suite_name.split(':').next_back().unwrap();
+        let contract = SuiteId::try_from(suite_name.as_str())?.contract();
         let test_name = test_name.trim_end_matches("()");
         let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
         let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
