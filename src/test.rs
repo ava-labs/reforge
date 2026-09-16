@@ -340,7 +340,7 @@ pub(crate) async fn compile_and_run(
     };
 
     // Clone the Arc *before* consuming `macros` so we can access expanded sources later.
-    let preprocessed_sources_arc = Arc::clone(&macros.preprocessed_sources);
+    let preprocessed_arc = Arc::clone(&macros.preprocessed);
 
     let output = compiler.compile(&project, macros)?;
 
@@ -350,7 +350,7 @@ pub(crate) async fn compile_and_run(
         config,
         evm_opts,
         &output,
-        preprocessed_sources_arc,
+        preprocessed_arc,
         false,
     )
     .await?;
@@ -370,7 +370,7 @@ pub async fn run_tests(
     mut config: Config,
     mut evm_opts: EvmOpts,
     output: &ProjectCompileOutput,
-    preprocessed_sources: Arc<std::sync::Mutex<Option<foundry_compilers::artifacts::Sources>>>,
+    preprocessed: Arc<std::sync::Mutex<Option<crate::PreprocessedOutput>>>,
     coverage: bool,
 ) -> eyre::Result<TestOutcome> {
     let filter = args.filter(&config)?;
@@ -422,8 +422,9 @@ pub async fn run_tests(
 
     // If macro expansion produced expanded sources, replace the runner's Solar analysis
     // (which was built on stale on-disk sources) with a fresh silent one.
-    let expanded_sources = preprocessed_sources.lock().unwrap().clone();
-    if let Some(ref sources) = expanded_sources {
+    let expanded = preprocessed.lock().unwrap().clone();
+    if let Some(ref preprocessed) = expanded {
+        let sources = &preprocessed.sources;
         let analysis = create_silent_solar_analysis(sources)?;
         let analysis = Arc::new(analysis);
         let fuzz_literals = forge::fuzz::strategies::LiteralsDictionary::new(
