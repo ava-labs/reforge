@@ -56,19 +56,19 @@ impl<'a> Lockfile<'a> {
 
     /// Loads the lockfile from the project root.
     ///
-    /// Throws an error if the lockfile does not exist.
-    pub fn read(&mut self) -> eyre::Result<()> {
-        if !self.lockfile_path.exists() {
-            return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
-        }
-
-        let lockfile_str = foundry_common::fs::read_to_string(&self.lockfile_path)?;
+    /// Returns `Ok(None)` if the lockfile does not exist.
+    pub fn read(&mut self) -> eyre::Result<Option<()>> {
+        let lockfile_str = match std::fs::read_to_string(&self.lockfile_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
         self.deps = serde_json::from_str(&lockfile_str)?;
 
         trace!(lockfile = ?self.deps, "loaded lockfile");
 
-        Ok(())
+        Ok(Some(()))
     }
 }
 
@@ -106,21 +106,18 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
 
 /// Check foundry.lock file consistency with git submodules
 pub(crate) fn check_foundry_lock_consistency(config: &Config) {
-    use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
-
-    let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-    if !foundry_lock_path.exists() {
-        return;
-    }
+    use crate::lockfile::{DepIdentifier, Lockfile};
 
     let git = Git::new(&config.root);
 
     let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-    if let Err(e) = lockfile.read() {
-        if !e.to_string().contains("Lockfile not found") {
+    match lockfile.read() {
+        Ok(None) => return,
+        Ok(Some(())) => {}
+        Err(e) => {
             sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+            return;
         }
-        return;
     }
 
     for (dep_path, dep_identifier) in lockfile.deps.iter() {
