@@ -61,32 +61,28 @@ impl fmt::Display for ProjectPathsAwareFilter {
     }
 }
 
+/// Fills `slot` from `from` if `slot` is currently `None`.
+fn or_config<T, U>(slot: &mut Option<U>, from: &Option<T>)
+where
+    T: Clone + Into<U>,
+{
+    if slot.is_none() {
+        *slot = from.clone().map(Into::into);
+    }
+}
+
 /// Builds a `ProjectPathsAwareFilter` from `FilterArgs` and `Config`, mirroring
 /// `FilterArgs::merge_with_config` but returning our own named type.
 pub fn merge_filter_with_config(
     mut filter: FilterArgs,
     config: &Config,
 ) -> ProjectPathsAwareFilter {
-    if filter.test_pattern.is_none() {
-        filter.test_pattern = config.test_pattern.clone().map(Into::into);
-    }
-    if filter.test_pattern_inverse.is_none() {
-        filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(Into::into);
-    }
-    if filter.contract_pattern.is_none() {
-        filter.contract_pattern = config.contract_pattern.clone().map(Into::into);
-    }
-    if filter.contract_pattern_inverse.is_none() {
-        filter.contract_pattern_inverse = config.contract_pattern_inverse.clone().map(Into::into);
-    }
-    if filter.path_pattern.is_none() {
-        filter.path_pattern = config.path_pattern.clone().map(Into::into);
-    }
-    if filter.path_pattern_inverse.is_none() {
-        filter.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
-    }
-    if filter.coverage_pattern_inverse.is_none() {
-        filter.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
-    }
+    or_config(&mut filter.test_pattern,              &config.test_pattern);
+    or_config(&mut filter.test_pattern_inverse,      &config.test_pattern_inverse);
+    or_config(&mut filter.contract_pattern,          &config.contract_pattern);
+    or_config(&mut filter.contract_pattern_inverse,  &config.contract_pattern_inverse);
+    or_config(&mut filter.path_pattern,              &config.path_pattern);
+    or_config(&mut filter.path_pattern_inverse,      &config.path_pattern_inverse);
+    or_config(&mut filter.coverage_pattern_inverse,  &config.coverage_pattern_inverse);
     ProjectPathsAwareFilter { args_filter: filter, paths: config.project_paths() }
 }
