@@ -144,16 +144,16 @@ impl<'a> AdjustmentEntry<'a> {
 }
 
 impl OffsetAdjustment {
-    /// Returns the current offset in `path` corresponding to `edit_offset` from the HIR,
+    /// Returns the current offset in `path` corresponding to `original_offset` from the HIR,
     /// accounting for all length-changing edits recorded by previous macro rules. This is done
-    /// by summing all offset deltas affecting the source code prior to the input `edit_offset`.
-    pub fn adjusted_offset(&self, path: &Path, edit_offset: usize) -> usize {
+    /// by summing all offset deltas affecting the source code prior to the input `original_offset`.
+    pub fn adjusted_offset(&self, path: &Path, original_offset: usize) -> usize {
         let delta: isize = self
             .iter()
-            .filter(|(p, a)| p == path && a.original_offset <= edit_offset)
+            .filter(|(p, a)| p == path && a.original_offset <= original_offset)
             .map(|(_, a)| a.delta_offset)
             .sum();
-        (edit_offset as isize + delta) as usize
+        (original_offset as isize + delta) as usize
     }
 
     /// Records an edit in `path` at `original_offset` in the original source and returns the

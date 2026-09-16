@@ -9,10 +9,6 @@ ignore = [
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 
-    # rustls-webpki: requires RevocationOptions + attacker-controlled CRLs.
-    # Default rustls config does not enable CRL checking.
-    "RUSTSEC-2026-0104",
-
     # proc-macro-error2: unmaintained. Compile-time proc-macro only.
     "RUSTSEC-2026-0173",
 
