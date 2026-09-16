@@ -23,6 +23,39 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use regex::Regex;
 
 use crate::test::filter::ProjectPathsAwareFilter;
+
+// ---------------------------------------------------------------------------
+// Suite key parsing
+// ---------------------------------------------------------------------------
+
+/// A borrowed, parsed view of a foundry suite key (`"path/to/File.sol:ContractName"`).
+///
+/// The split is always on the **last** colon so that file paths containing
+/// colons (e.g. Windows drive letters) are tolerated correctly.
+pub(super) struct SuiteId<'a> {
+    key: &'a str,
+    colon: usize,
+}
+
+impl<'a> SuiteId<'a> {
+    pub(super) fn path(&self) -> &'a str {
+        &self.key[..self.colon]
+    }
+
+    pub(super) fn contract(&self) -> &'a str {
+        &self.key[self.colon + 1..]
+    }
+}
+
+impl<'a> TryFrom<&'a str> for SuiteId<'a> {
+    type Error = eyre::Report;
+
+    fn try_from(key: &'a str) -> Result<Self, Self::Error> {
+        let colon = key.rfind(':').ok_or_else(|| eyre::eyre!("suite key missing ':': {key:?}"))?;
+        Ok(Self { key, colon })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Summary helpers (duplicated from forge's private summary module)
 // ---------------------------------------------------------------------------
@@ -54,7 +87,8 @@ impl TestSummaryReport {
     fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
         let output = serde_json::json!({
             "results": outcome.results.iter().map(|(contract, suite)| {
-                let (suite_path, suite_name) = contract.split_once(':').unwrap();
+                let id = SuiteId::try_from(contract.as_str()).expect("malformed suite key");
+                let (suite_path, suite_name) = (id.path(), id.contract());
                 let passed = suite.successes().count();
                 let failed = suite.failures().count();
                 let skipped = suite.skips().count();
@@ -95,7 +129,8 @@ impl TestSummaryReport {
         table.set_header(row);
         for (contract, suite) in &outcome.results {
             let mut row = Row::new();
-            let (suite_path, suite_name) = contract.split_once(':').unwrap();
+            let id = SuiteId::try_from(contract.as_str()).expect("malformed suite key");
+            let (suite_path, suite_name) = (id.path(), id.contract());
             let passed = suite.successes().count();
             let mut passed_cell = Cell::new(passed);
             let failed = suite.failures().count();
