@@ -278,7 +278,10 @@ pub fn create_silent_solar_analysis(
 ) -> eyre::Result<solar::sema::Compiler> {
     let session = solar::interface::Session::builder().with_silent_emitter(None).build();
     let mut compiler = solar::sema::Compiler::new(session);
-    crate::solar_load_and_lower(&mut compiler, sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())));
+    crate::solar_load_and_lower(
+        &mut compiler,
+        sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())),
+    );
     Ok(compiler)
 }
 

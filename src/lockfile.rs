@@ -9,15 +9,12 @@
 
 use std::path::{Path, PathBuf};
 
-pub use forge::DepIdentifier;
 use forge::revm::primitives::HashMap;
 use foundry_cli::utils::Git;
 use foundry_common::sh_warn;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
-
-pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
 /// A lockfile handler that keeps track of the dependencies and their current state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,10 +34,7 @@ impl Lockfile {
     ///
     /// You will need to call [`Lockfile::read`] to load the lockfile.
     pub fn new(project_root: &Path) -> Self {
-        Self {
-            deps: HashMap::default(),
-            lockfile_path: project_root.join(forge::FOUNDRY_LOCK),
-        }
+        Self { deps: HashMap::default(), lockfile_path: project_root.join(forge::FOUNDRY_LOCK) }
     }
 
     /// Loads the lockfile from the project root.
@@ -95,7 +89,7 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
 
 /// Check foundry.lock file consistency with git submodules
 pub(crate) fn check_foundry_lock_consistency(config: &Config) {
-    use crate::lockfile::{DepIdentifier, Lockfile};
+    use crate::lockfile::Lockfile;
 
     let git = Git::new(&config.root);
 

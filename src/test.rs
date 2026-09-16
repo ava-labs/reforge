@@ -473,7 +473,8 @@ pub async fn run_tests(
 
     let libraries = runner.libraries.clone();
     let mut outcome =
-        run_tests_inner(args, runner, config.clone(), verbosity, &filter, output, decode_internal).await?;
+        run_tests_inner(args, runner, config.clone(), verbosity, &filter, output, decode_internal)
+            .await?;
 
     if let Some(draw_mode @ (SingleTestMode::Flamegraph | SingleTestMode::Flamechart)) = mode {
         let (suite_name, test_name, mut test_result) =
@@ -585,7 +586,9 @@ async fn run_tests_inner(
         return Ok(TestOutcome::empty(Some(runner), false));
     }
 
-    if num_filtered != 1 && let Some(mode) = args.single_test_mode() {
+    if num_filtered != 1
+        && let Some(mode) = args.single_test_mode()
+    {
         let filter_str =
             if filter.is_empty() { String::new() } else { format!("\n\nFilter used:\n{filter}") };
         eyre::bail!(
@@ -726,8 +729,7 @@ async fn run_tests_inner(
                 if identify_addresses {
                     decoder.identify(arena, &mut identifier);
                 }
-                let should_include =
-                    verbosity >= min_verbosity(*kind, result.status.is_failure());
+                let should_include = verbosity >= min_verbosity(*kind, result.status.is_failure());
                 if should_include {
                     decode_trace_arena(arena, &decoder).await;
                     if let Some(trace_depth) = args.trace_depth {
@@ -893,9 +895,9 @@ async fn run_tests_inner(
 fn min_verbosity(kind: TraceKind, failed: bool) -> u8 {
     match (kind, failed) {
         (TraceKind::Execution, false) => 4,
-        (TraceKind::Execution, true)  => 3,
-        (TraceKind::Setup,     false) => 5,
-        (TraceKind::Setup,     true)  => 4,
-        (TraceKind::Deployment, _)    => u8::MAX,
+        (TraceKind::Execution, true) => 3,
+        (TraceKind::Setup, false) => 5,
+        (TraceKind::Setup, true) => 4,
+        (TraceKind::Deployment, _) => u8::MAX,
     }
 }
