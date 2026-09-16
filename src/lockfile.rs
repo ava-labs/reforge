@@ -21,37 +21,26 @@ pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
 /// A lockfile handler that keeps track of the dependencies and their current state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Lockfile<'a> {
+pub struct Lockfile {
     /// A map of the dependencies keyed by relative path to the submodule dir.
     #[serde(flatten)]
     deps: forge::DepMap,
-    /// This is optional to handle no-git scenarios.
-    #[serde(skip)]
-    git: Option<&'a Git<'a>>,
     /// Absolute path to the lockfile.
     #[serde(skip)]
     lockfile_path: PathBuf,
 }
 
-impl<'a> Lockfile<'a> {
-    /// Create a new [`forge::Lockfile`] instance.
+impl Lockfile {
+    /// Create a new [`Lockfile`] instance.
     ///
     /// `project_root` is the absolute path to the project root.
     ///
-    /// You will need to call [`forge::Lockfile::read`] or [`forge::Lockfile::sync`] to load the
-    /// lockfile.
+    /// You will need to call [`Lockfile::read`] to load the lockfile.
     pub fn new(project_root: &Path) -> Self {
         Self {
             deps: HashMap::default(),
-            git: None,
             lockfile_path: project_root.join(forge::FOUNDRY_LOCK),
         }
-    }
-
-    /// Set the git instance to be used for submodule operations.
-    pub fn with_git(mut self, git: &'a Git<'_>) -> Self {
-        self.git = Some(git);
-        self
     }
 
     /// Loads the lockfile from the project root.
@@ -110,7 +99,7 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
 
     let git = Git::new(&config.root);
 
-    let mut lockfile = Lockfile::new(&config.root).with_git(&git);
+    let mut lockfile = Lockfile::new(&config.root);
     match lockfile.read() {
         Ok(None) => return,
         Ok(Some(())) => {}
