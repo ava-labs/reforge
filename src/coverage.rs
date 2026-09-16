@@ -456,19 +456,13 @@ fn build_expanded_compiler(
     sol_paths: &ProjectPathsConfig<SolcLanguage>,
 ) -> solar::sema::Compiler {
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
-    compiler.enter_mut(|compiler| {
-        let mut pcx = compiler.parse();
-        for (path, source) in preprocessed.iter() {
+    crate::solar_load_and_lower(
+        &mut compiler,
+        preprocessed.iter().map(|(path, source)| {
             let abs = if path.is_absolute() { path.clone() } else { root.join(path) };
-            if let Ok(src_file) =
-                compiler.sess().source_map().new_source_file(abs, source.content.as_str())
-            {
-                pcx.add_file(src_file);
-            }
-        }
-        pcx.parse();
-        let _ = compiler.lower_asts();
-    });
+            (abs, source.content.as_str())
+        }),
+    );
     compiler
 }
 

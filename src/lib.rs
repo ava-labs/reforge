@@ -290,6 +290,28 @@ impl MacroRules {
     }
 }
 
+/// Feeds `sources` into `compiler`, parses them, and lowers to HIR.
+///
+/// `lower_asts()` returns `Break` when sources reference not-yet-defined symbols
+/// (e.g. identifiers that macro expansion will inject). The return value is
+/// intentionally discarded — the partial HIR still contains all definition nodes
+/// and is valid for both source analysis and macro traversal.
+pub(crate) fn solar_load_and_lower<'a>(
+    compiler: &mut solar::sema::Compiler,
+    sources: impl IntoIterator<Item = (PathBuf, &'a str)> + Send,
+) {
+    compiler.enter_mut(|compiler| {
+        let mut pcx = compiler.parse();
+        for (path, content) in sources {
+            if let Ok(src_file) = compiler.sess().source_map().new_source_file(path, content) {
+                pcx.add_file(src_file);
+            }
+        }
+        pcx.parse();
+        let _ = compiler.lower_asts();
+    });
+}
+
 impl Preprocessor<SolcCompiler> for MacroRules {
     fn preprocess(
         &self,

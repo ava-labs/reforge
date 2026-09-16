@@ -129,38 +129,29 @@ pub fn expand_macros_with_sources(
         }
     };
 
+    crate::solar_load_and_lower(
+        &mut compiler,
+        sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())),
+    );
+
+    let relative_paths_storage;
+    let src_dir = match paths {
+        Some(paths) => {
+            relative_paths_storage = paths.paths_relative();
+            &relative_paths_storage.sources
+        }
+        None => root,
+    };
+    let mut mocks = HashSet::new();
+    let mut data = PreprocessingData {
+        input: &mut sources,
+        root_dir: root,
+        src_dir,
+        mocks: &mut mocks,
+        offset_adjustments: Default::default(),
+    };
     compiler
         .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
-            let mut pcx = compiler.parse();
-            for (path, src) in sources.iter() {
-                if let Ok(src_file) =
-                    compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
-                {
-                    pcx.add_file(src_file);
-                }
-            }
-            pcx.parse();
-            // lower_asts() may return Break when pre-expansion code references symbols that macros
-            // will inject. Run rules regardless — item/struct definitions are present in the
-            // partial HIR.
-            let _ = compiler.lower_asts();
-
-            let relative_paths_storage;
-            let src_dir = match paths {
-                Some(paths) => {
-                    relative_paths_storage = paths.paths_relative();
-                    &relative_paths_storage.sources
-                }
-                None => root,
-            };
-            let mut mocks = HashSet::new();
-            let mut data = PreprocessingData {
-                input: &mut sources,
-                root_dir: root,
-                src_dir,
-                mocks: &mut mocks,
-                offset_adjustments: Default::default(),
-            };
             let gcx = compiler.gcx();
             for rule in macro_rules {
                 rule(&gcx, &mut data)?;
