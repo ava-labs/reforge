@@ -193,8 +193,7 @@ impl StderrSilencer {
         };
         // SAFETY: open /dev/null for writing, then redirect stderr to it.
         unsafe {
-            let null_fd =
-                libc::open(c"/dev/null".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+            let null_fd = libc::open(c"/dev/null".as_ptr() as *const libc::c_char, libc::O_WRONLY);
             assert!(null_fd >= 0, "open(/dev/null) failed");
             let null_owned = OwnedFd::from_raw_fd(null_fd);
             libc::dup2(null_owned.as_raw_fd(), 2);
