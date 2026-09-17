@@ -179,7 +179,6 @@ pub struct MacroRules {
     pub(crate) preprocessed: Arc<Mutex<Option<PreprocessedOutput>>>,
 }
 
-
 impl Debug for MacroRules {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MacroRules").field("rules", &"<functions>").finish()
@@ -418,4 +417,3 @@ pub fn get_comment(
     let trimmed = comment_block.trim_start();
     if trimmed.starts_with("//") || trimmed.starts_with("/*") { Some(comment_block) } else { None }
 }
-
