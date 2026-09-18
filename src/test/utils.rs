@@ -273,19 +273,15 @@ pub fn last_run_failures(config: &Config) -> Option<Regex> {
 /// Persist filter with last test run failures (only if there's any failure).
 pub fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.failures().peekable();
-        while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
-            {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
-                }
-            }
+        let filter = outcome
+            .failures()
+            .filter(|(name, _)| name.is_any_test())
+            .filter_map(|(name, _)| name.split('(').next())
+            .join("|");
+
+        if !filter.is_empty() {
+            let _ = fs::write(&config.test_failures_file, filter);
         }
-        let _ = fs::write(&config.test_failures_file, filter);
     }
 }
 
