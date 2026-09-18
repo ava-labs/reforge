@@ -32,14 +32,14 @@ inferno = { version = "0.12", default-features = false }
 itertools = "0.15"
 libc = "0.2"
 opener = "0.8"
-quick-junit = "0.7"
+quick-junit = "0.8"
 rayon = "1.12"
 regex = "1.12.3"
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
-soldeer-core = { version = "=0.11.0", features = ["serde"] }
+soldeer-core = { version = "=0.12.0", features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 yansi = "1.0"
