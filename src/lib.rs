@@ -49,7 +49,7 @@ use crate::{span_utils::OffsetAdjustment, test::TestArgs};
     long_version = LONG_VERSION,
     about = "A tool for combining with Forge with macro expansions in Solidity.",
 )]
-pub struct Reforge {
+pub struct ReforgeCli<C: Subcommand = ForgeCommand> {
     #[command(flatten)]
     pub global: GlobalArgs,
 
@@ -62,8 +62,10 @@ pub struct Reforge {
     pub display: Option<String>,
 
     #[command(subcommand)]
-    pub forge: ForgeCommand,
+    pub forge: C,
 }
+
+pub type Reforge = ReforgeCli;
 
 pub enum ForgeCommand {
     Intercept(TestArgs),

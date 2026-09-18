@@ -496,27 +496,6 @@ fn parse_lcov_version(s: &str) -> Result<Version, String> {
     Ok(Version::new(c.major, c.minor.unwrap_or(0), c.patch.unwrap_or(0)))
 }
 
-/// Mirror of reforge's top-level CLI, restricted to the `coverage` subcommand.
-///
-/// Foundry's `CoverageArgs` does not expose its fields, so once the main parser
-/// has identified a `coverage` invocation we re-parse `std::env` into reforge's
-/// own [`CoverageArgs`]. The flag layout must mirror [`crate::Reforge`].
-#[derive(Parser)]
-#[command(name = "reforge")]
-struct CoverageCli {
-    #[arg(long)]
-    #[allow(dead_code)]
-    disable_macros: bool,
-    #[arg(long, value_name = "GLOB")]
-    #[allow(dead_code)]
-    display: Option<String>,
-    #[command(flatten)]
-    #[allow(dead_code)]
-    global: foundry_cli::opts::GlobalArgs,
-    #[command(subcommand)]
-    cmd: CoverageSub,
-}
-
 #[derive(clap::Subcommand)]
 enum CoverageSub {
     Coverage(CoverageArgs),
@@ -527,7 +506,7 @@ enum CoverageSub {
 /// Must only be called once the main parser has confirmed the invocation is a
 /// `coverage` subcommand.
 pub fn parse_from_env() -> CoverageArgs {
-    match CoverageCli::parse().cmd {
+    match crate::ReforgeCli::<CoverageSub>::parse().forge {
         CoverageSub::Coverage(args) => args,
     }
 }
