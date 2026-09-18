@@ -178,6 +178,40 @@ pub fn format_invariant_metrics_table(
 // Stderr suppression (Unix-only fd 2 redirect around Solar-noisy build call)
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
+struct StderrSilencer(std::os::fd::OwnedFd);
+
+#[cfg(unix)]
+impl StderrSilencer {
+    pub fn new() -> Self {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        // SAFETY: dup(2) duplicates stderr; we own the returned fd.
+        let saved = unsafe {
+            let fd = libc::dup(2);
+            assert!(fd >= 0, "dup(stderr) failed");
+            OwnedFd::from_raw_fd(fd)
+        };
+        // SAFETY: open /dev/null for writing, then redirect stderr to it.
+        unsafe {
+            let null_fd = libc::open(c"/dev/null".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+            assert!(null_fd >= 0, "open(/dev/null) failed");
+            let null_owned = OwnedFd::from_raw_fd(null_fd);
+            libc::dup2(null_owned.as_raw_fd(), 2);
+            // null_owned is dropped here, closing the extra fd; fd 2 now points to /dev/null
+        };
+        StderrSilencer(saved)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StderrSilencer {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // SAFETY: `self.0` is a live fd we own.
+        unsafe { libc::dup2(self.0.as_raw_fd(), 2) };
+    }
+}
+
 /// Temporarily redirect fd 2 to /dev/null for the duration of `f`, then restore it.
 /// On non-Unix platforms this is a no-op.
 #[cfg(unix)]
@@ -185,16 +219,8 @@ pub fn suppress_stderr<F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
 {
-    unsafe {
-        let saved = libc::dup(2);
-        let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
-        libc::dup2(devnull, 2);
-        libc::close(devnull);
-        let result = f();
-        libc::dup2(saved, 2);
-        libc::close(saved);
-        result
-    }
+    let _guard = StderrSilencer::new();
+    f()
 }
 
 #[cfg(not(unix))]
