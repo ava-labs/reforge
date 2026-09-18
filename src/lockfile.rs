@@ -9,7 +9,6 @@
 
 use std::path::{Path, PathBuf};
 
-pub use forge::DepIdentifier;
 use forge::revm::primitives::HashMap;
 use foundry_cli::utils::Git;
 use foundry_common::sh_warn;
@@ -17,58 +16,42 @@ use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
-pub const FOUNDRY_LOCK: &str = "foundry.lock";
-
 /// A lockfile handler that keeps track of the dependencies and their current state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Lockfile<'a> {
+pub struct Lockfile {
     /// A map of the dependencies keyed by relative path to the submodule dir.
     #[serde(flatten)]
     deps: forge::DepMap,
-    /// This is optional to handle no-git scenarios.
-    #[serde(skip)]
-    git: Option<&'a Git<'a>>,
     /// Absolute path to the lockfile.
     #[serde(skip)]
     lockfile_path: PathBuf,
 }
 
-impl<'a> Lockfile<'a> {
-    /// Create a new [`forge::Lockfile`] instance.
+impl Lockfile {
+    /// Create a new [`Lockfile`] instance.
     ///
     /// `project_root` is the absolute path to the project root.
     ///
-    /// You will need to call [`forge::Lockfile::read`] or [`forge::Lockfile::sync`] to load the
-    /// lockfile.
+    /// You will need to call [`Lockfile::read`] to load the lockfile.
     pub fn new(project_root: &Path) -> Self {
-        Self {
-            deps: HashMap::default(),
-            git: None,
-            lockfile_path: project_root.join(forge::FOUNDRY_LOCK),
-        }
-    }
-
-    /// Set the git instance to be used for submodule operations.
-    pub fn with_git(mut self, git: &'a Git<'_>) -> Self {
-        self.git = Some(git);
-        self
+        Self { deps: HashMap::default(), lockfile_path: project_root.join(forge::FOUNDRY_LOCK) }
     }
 
     /// Loads the lockfile from the project root.
     ///
-    /// Throws an error if the lockfile does not exist.
-    pub fn read(&mut self) -> eyre::Result<()> {
-        if !self.lockfile_path.exists() {
-            return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
-        }
-
-        let lockfile_str = foundry_common::fs::read_to_string(&self.lockfile_path)?;
+    /// Returns `Ok(None)` if the lockfile does not exist.
+    pub fn read(&mut self) -> eyre::Result<Option<()>> {
+        let lockfile_str = match std::fs::read_to_string(&self.lockfile_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
         self.deps = serde_json::from_str(&lockfile_str)?;
 
         trace!(lockfile = ?self.deps, "loaded lockfile");
 
-        Ok(())
+        Ok(Some(()))
     }
 }
 
@@ -106,21 +89,18 @@ pub(crate) async fn check_soldeer_lock_consistency(config: &Config) {
 
 /// Check foundry.lock file consistency with git submodules
 pub(crate) fn check_foundry_lock_consistency(config: &Config) {
-    use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
-
-    let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-    if !foundry_lock_path.exists() {
-        return;
-    }
+    use crate::lockfile::Lockfile;
 
     let git = Git::new(&config.root);
 
-    let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-    if let Err(e) = lockfile.read() {
-        if !e.to_string().contains("Lockfile not found") {
+    let mut lockfile = Lockfile::new(&config.root);
+    match lockfile.read() {
+        Ok(None) => return,
+        Ok(Some(())) => {}
+        Err(e) => {
             sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+            return;
         }
-        return;
     }
 
     for (dep_path, dep_identifier) in lockfile.deps.iter() {
@@ -139,18 +119,11 @@ pub(crate) fn check_foundry_lock_consistency(config: &Config) {
             }
         };
 
-        // Compare with the expected revision from lockfile
-        let expected_rev = match dep_identifier {
-            DepIdentifier::Branch { rev, .. }
-            | DepIdentifier::Tag { rev, .. }
-            | DepIdentifier::Rev { rev, .. } => rev.clone(),
-        };
-
-        if actual_rev != expected_rev {
+        if actual_rev != dep_identifier.rev() {
             sh_warn!(
                 "Dependency '{}' revision mismatch: expected '{}', found '{}'",
                 dep_path.display(),
-                expected_rev,
+                dep_identifier.rev(),
                 actual_rev
             )
             .ok();
