@@ -486,28 +486,6 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
     }
 }
 
-/// Mirror of reforge's top-level CLI, restricted to the `snapshot` subcommand.
-///
-/// Foundry's `GasSnapshotArgs` does not expose its fields, so once the main
-/// parser has identified a `snapshot` invocation we re-parse `std::env` into
-/// reforge's own [`GasSnapshotArgs`]. The flag layout must mirror
-/// [`crate::Reforge`].
-#[derive(Parser)]
-#[command(name = "reforge")]
-struct SnapshotCli {
-    #[arg(long)]
-    #[allow(dead_code)]
-    disable_macros: bool,
-    #[arg(long, value_name = "GLOB")]
-    #[allow(dead_code)]
-    display: Option<String>,
-    #[command(flatten)]
-    #[allow(dead_code)]
-    global: foundry_cli::opts::GlobalArgs,
-    #[command(subcommand)]
-    cmd: SnapshotSub,
-}
-
 #[derive(clap::Subcommand)]
 enum SnapshotSub {
     #[command(visible_alias = "s")]
@@ -519,7 +497,7 @@ enum SnapshotSub {
 /// Must only be called once the main parser has confirmed the invocation is a
 /// `snapshot` subcommand.
 pub fn parse_from_env() -> GasSnapshotArgs {
-    match SnapshotCli::parse().cmd {
+    match crate::ReforgeCli::<SnapshotSub>::parse().forge {
         SnapshotSub::Snapshot(args) => args,
     }
 }
