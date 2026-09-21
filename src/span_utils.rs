@@ -236,8 +236,10 @@ impl OffsetAdjustment {
     /// span (use [`find_macro_adjustment_by_offset`](Self::find_macro_adjustment_by_offset)
     /// to check first).
     pub fn get_original_offset(&self, source: &Path, expanded_offset: usize) -> usize {
-        self.fold(source, expanded_offset, expanded_offset as isize, |_, _, adj, acc| {
-            *acc -= adj.delta_offset;
+        self.fold(source, expanded_offset, expanded_offset as isize, |pos, off, adj, acc| {
+            if pos < off as isize {
+                *acc -= adj.delta_offset;
+            }
             ControlFlow::Continue(())
         }) as usize
     }
@@ -369,6 +371,28 @@ mod tests {
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
         assert_eq!(adj.adjusted_offset(Path::new("foo.sol"), 41), 23);
+    }
+
+    /// Regression test: `get_original_offset` must only subtract the delta of adjustments whose
+    /// expanded position is strictly before the query, not all adjustments in the file.
+    ///
+    /// Insertion order:
+    ///   A (original_offset=3, added_len=3): expanded range [3, 6),  delta=+3
+    ///   B (original_offset=7, added_len=3): expanded range [10, 13), delta=+3
+    ///
+    /// Query at expanded byte 8 (between A and B): only A's delta applies, so original = 8 - 3 = 5.
+    /// The bug subtracted both deltas, returning 8 - 3 - 3 = 2.
+    #[test]
+    fn test_get_original_offset_ignores_later_adjustments() {
+        let mut adj = OffsetAdjustment::default();
+        let src = "0123456789";
+        adj.record(Path::new("x.sol"), 3, src, "AAA", "");
+        let mut after_a = src.to_string();
+        after_a.insert_str(3, "AAA"); // "012AAA3456789"
+        adj.record(Path::new("x.sol"), 7, &after_a, "BBB", ""); // expanded at 10
+
+        // Expanded byte 8 is '5', which is original byte 5. Only A's delta applies.
+        assert_eq!(adj.get_original_offset(Path::new("x.sol"), 8), 5);
     }
 
     /// Regression test for issue #26: a later-recorded adjustment with a lower `original_offset`
