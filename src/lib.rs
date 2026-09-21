@@ -28,6 +28,7 @@ use forge::{
 use foundry_cli::{opts::GlobalArgs, utils::LoadConfig};
 use foundry_common::{
     errors::convert_solar_errors,
+    sh_println,
     version::{LONG_VERSION, SHORT_VERSION},
 };
 use foundry_compilers::{
@@ -213,7 +214,7 @@ impl MacroRules {
                 let macros = if !args.disable_macros {
                     if self.rules.is_empty() {
                         tracing::info!("No macros rules present, skipping macro expansion.");
-                        println!("No macros rules present, skipping macro expansion.");
+                        sh_println!("No macros rules present, skipping macro expansion.")?;
                         MacroRules::default()
                     } else {
                         self
@@ -238,7 +239,7 @@ impl MacroRules {
                 if !args.disable_macros {
                     if self.rules.is_empty() {
                         tracing::info!("No macros rules present, skipping macro expansion.");
-                        println!("No macros rules present, skipping macro expansion.");
+                        sh_println!("No macros rules present, skipping macro expansion.")?;
                     } else {
                         let Forge { global, cmd } = forge;
                         return match cmd {
@@ -247,9 +248,9 @@ impl MacroRules {
                                     tracing::warn!(
                                         "Dynamic linking is not supported with macros expansion, skipping."
                                     );
-                                    println!(
+                                    sh_println!(
                                         "Dynamic linking is not supported with macros expansion, skipping."
-                                    );
+                                    )?;
                                 }
                                 global.block_on(build::build(build_args, self))
                             }
