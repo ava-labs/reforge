@@ -5,7 +5,7 @@ use std::path::Path;
 
 use foundry_compilers::artifacts::Error as SolcError;
 
-use crate::{MacroOriginalLocation, MacroRules};
+use crate::{MacroOriginalLocation, MacroRules, span_utils::ExpandedOffset};
 
 #[cfg(test)]
 pub static TEST_COMPILER_OUTPUT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -43,11 +43,14 @@ pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError, project_root: &Pa
     let expanded_start = loc.start as usize;
 
     let error_source = macros.with_offset_adjustments(|adjustments| {
-        if let Some(adj) = adjustments.find_macro_adjustment_by_offset(source, expanded_start) {
+        if let Some(adj) =
+            adjustments.find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))
+        {
             ErrorSource::Macro { name: adj.macro_name.clone(), loc: adj.original_location.clone() }
         } else {
-            let original_start = adjustments.get_original_offset(source, expanded_start);
-            ErrorSource::RawSource { loc: original_start }
+            let original_start =
+                adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start));
+            ErrorSource::RawSource { loc: original_start.get() }
         }
     });
 
@@ -147,7 +150,7 @@ fn format_macro_fmt_msg(
 mod tests {
     use solar::sema::{Gcx, hir::ContractKind};
 
-    use crate::{Macro, MacroOriginalLocation, PreprocessingData};
+    use crate::{Macro, MacroOriginalLocation, PreprocessingData, span_utils::OriginalOffset};
 
     /// Strips ANSI escape sequences from `s` so assertions can match plain text.
     fn strip_ansi(s: &str) -> String {
@@ -240,7 +243,7 @@ mod tests {
             let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
             let col = trigger - before.rfind('\n').map_or(0, |i| i + 1) + 1;
             let loc = MacroOriginalLocation { file: path.clone(), line, col };
-            (start..start + BODY.len(), loc)
+            (OriginalOffset::new(start)..OriginalOffset::new(start + BODY.len()), loc)
         };
         let replacement = "{\n        return \"bad\";\n    }";
         data.entry(&path, replacement)
@@ -262,7 +265,7 @@ mod tests {
             let content = data.input.get(&path).unwrap().content.as_str();
             let Some(start) = content.find("        // #[remove_me]") else { return Ok(()) };
             let Some(end) = content.find("        uint256 constant KEEP") else { return Ok(()) };
-            start..end
+            OriginalOffset::new(start)..OriginalOffset::new(end)
         };
         data.entry(&path, "").expect("Test failed").with("remove_block", None).replace(range);
         Ok(())
@@ -316,7 +319,7 @@ mod tests {
                 let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
                 let col = trigger_offset - before.rfind('\n').map_or(0, |i| i + 1) + 1;
                 let loc = MacroOriginalLocation { file: path.to_path_buf(), line, col };
-                (start + rel + 1, loc)
+                (OriginalOffset::new(start + rel + 1), loc)
             };
 
             let func = format!(

@@ -40,8 +40,11 @@ use foundry_compilers::{
 };
 use solar::sema::Gcx;
 
-pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation};
-use crate::{span_utils::OffsetAdjustment, test::TestArgs};
+pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation, OriginalOffset};
+use crate::{
+    span_utils::{ExpandedOffset, OffsetAdjustment},
+    test::TestArgs,
+};
 
 #[derive(Parser)]
 #[command(
@@ -145,7 +148,7 @@ pub struct PreprocessingData<'pre> {
 }
 
 impl<'pre> PreprocessingData<'pre> {
-    pub fn adjusted_offset(&self, path: &Path, original_offset: usize) -> usize {
+    pub fn adjusted_offset(&self, path: &Path, original_offset: OriginalOffset) -> ExpandedOffset {
         self.offset_adjustments.adjusted_offset(path, original_offset)
     }
 
@@ -417,8 +420,8 @@ pub fn get_comment(
     let source = ctx.sources.get(source_id)?;
     let path = source.file.name.as_real()?;
     let source_text = data.input.get(path)?.content.as_str();
-    let original_offset = (span.lo().0 - source.file.start_pos.0) as usize;
-    let adjusted = data.adjusted_offset(path, original_offset);
+    let original_offset = OriginalOffset::new((span.lo().0 - source.file.start_pos.0) as usize);
+    let adjusted = data.adjusted_offset(path, original_offset).get();
     // Walk back to the start of the line
     let line_start = source_text[..adjusted].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let before = &source_text[..line_start];

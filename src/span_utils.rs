@@ -2,12 +2,60 @@
 // See the file LICENSE for licensing terms.
 
 use std::{
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    marker::PhantomData,
+    ops::{Add, ControlFlow, Deref, DerefMut, Range, Sub},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use foundry_compilers::artifacts::Sources;
+
+pub trait OffsetType {}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Original;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Expanded;
+impl OffsetType for Original {}
+impl OffsetType for Expanded {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Offset<T: OffsetType> {
+    value: usize,
+    _ty: PhantomData<T>,
+}
+
+pub type OriginalOffset = Offset<Original>;
+pub type ExpandedOffset = Offset<Expanded>;
+
+impl<T: OffsetType> Offset<T> {
+    #[inline]
+    pub const fn new(offset: usize) -> Self {
+        Self { value: offset, _ty: PhantomData }
+    }
+
+    #[inline]
+    pub const fn get(self) -> usize {
+        self.value
+    }
+}
+
+impl<T: OffsetType> Add<usize> for Offset<T> {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: usize) -> Self::Output {
+        Self::new(self.get() + rhs)
+    }
+}
+
+impl<T: OffsetType> Sub<isize> for Offset<T> {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: isize) -> Self::Output {
+        Self::new((self.get() as isize - rhs) as usize)
+    }
+}
 
 /// An original source location to which a macro-generated span can be attributed.
 #[derive(Debug, Clone)]
@@ -47,7 +95,7 @@ pub struct OffsetAdjustment(Vec<(PathBuf, Adjustment)>);
 #[derive(Debug, Clone)]
 pub struct Adjustment {
     /// Byte offset in the **original, unmodified** source where this edit was applied.
-    pub original_offset: usize,
+    pub original_offset: OriginalOffset,
     /// 1-based line number in the **original, unmodified** source corresponding to
     /// `original_offset`.
     pub original_line: usize,
@@ -105,13 +153,13 @@ impl<'a> AdjustmentEntry<'a> {
     /// `original_offset` must be a byte offset derived from a Solar HIR span (i.e. relative to
     /// the unmodified source). The method translates it to the current position in the
     /// already-modified text before performing the insertion.
-    pub fn insert(self, original_offset: usize) -> EditInfo {
+    pub fn insert(self, original_offset: OriginalOffset) -> EditInfo {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
         let content = Arc::make_mut(&mut src.content);
         let (adjusted, info) =
             offset_adjustments.record(path, original_offset, content.as_str(), text, "");
-        content.insert_str(adjusted, text);
+        content.insert_str(adjusted.get(), text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
@@ -126,7 +174,7 @@ impl<'a> AdjustmentEntry<'a> {
     /// Both range endpoints are translated through any previously recorded adjustments before the
     /// replacement is applied. Does nothing and returns `None` if `original_range` is empty or
     /// inverted.
-    pub fn replace(self, original_range: Range<usize>) -> Option<EditInfo> {
+    pub fn replace(self, original_range: Range<OriginalOffset>) -> Option<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
             return None;
@@ -135,10 +183,10 @@ impl<'a> AdjustmentEntry<'a> {
         let adjusted_end = offset_adjustments.adjusted_offset(path, original_range.end);
         let src = sources.get_mut(path).unwrap();
         let content = Arc::make_mut(&mut src.content);
-        let removed = content[adjusted_start..adjusted_end].to_owned();
+        let removed = content[adjusted_start.get()..adjusted_end.get()].to_owned();
         let (_, info) =
             offset_adjustments.record(path, original_range.start, content.as_str(), text, &removed);
-        content.replace_range(adjusted_start..adjusted_end, text);
+        content.replace_range(adjusted_start.get()..adjusted_end.get(), text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
@@ -151,13 +199,13 @@ impl OffsetAdjustment {
     /// Returns the current offset in `path` corresponding to `original_offset` from the HIR,
     /// accounting for all length-changing edits recorded by previous macro rules. This is done
     /// by summing all offset deltas affecting the source code prior to the input `original_offset`.
-    pub fn adjusted_offset(&self, path: &Path, original_offset: usize) -> usize {
+    pub fn adjusted_offset(&self, path: &Path, original_offset: OriginalOffset) -> ExpandedOffset {
         let delta: isize = self
             .iter()
             .filter(|(p, a)| p == path && a.original_offset <= original_offset)
             .map(|(_, a)| a.delta_offset)
             .sum();
-        (original_offset as isize + delta) as usize
+        ExpandedOffset::new((original_offset.get() as isize + delta) as usize)
     }
 
     /// Records an edit in `path` at `original_offset` in the original source and returns the
@@ -172,14 +220,14 @@ impl OffsetAdjustment {
     fn record(
         &mut self,
         path: &Path,
-        original_offset: usize,
+        original_offset: OriginalOffset,
         source: &str,
         added: &str,
         removed: &str,
-    ) -> (usize, EditInfo) {
+    ) -> (ExpandedOffset, EditInfo) {
         let adjusted_offset = self.adjusted_offset(path, original_offset);
         let current_line =
-            source[..adjusted_offset].bytes().filter(|&b| b == b'\n').count() as isize + 1;
+            source[..adjusted_offset.get()].bytes().filter(|&b| b == b'\n').count() as isize + 1;
         let accumulated_line_delta: isize = self
             .iter()
             .filter(|(p, a)| p.as_path() == path && a.original_offset <= original_offset)
@@ -213,10 +261,10 @@ impl OffsetAdjustment {
     pub fn find_macro_adjustment_by_offset(
         &self,
         source: &Path,
-        expanded_offset: usize,
+        expanded_offset: ExpandedOffset,
     ) -> Option<&Adjustment> {
-        self.fold(source, expanded_offset, None, |pos, off, adj, acc| {
-            if pos as usize <= off && (off as isize) < pos + adj.added_len as isize {
+        self.fold(source, expanded_offset, None, |pos, adj, acc| {
+            if pos <= expanded_offset && expanded_offset < pos + adj.added_len {
                 *acc = Some(adj);
                 ControlFlow::Break(())
             } else {
@@ -235,13 +283,22 @@ impl OffsetAdjustment {
     /// The caller is responsible for ensuring `expanded_offset` is not inside a macro-generated
     /// span (use [`find_macro_adjustment_by_offset`](Self::find_macro_adjustment_by_offset)
     /// to check first).
-    pub fn get_original_offset(&self, source: &Path, expanded_offset: usize) -> usize {
-        self.fold(source, expanded_offset, expanded_offset as isize, |pos, off, adj, acc| {
-            if pos < off as isize {
-                *acc -= adj.delta_offset;
-            }
-            ControlFlow::Continue(())
-        }) as usize
+    pub fn get_original_offset(
+        &self,
+        source: &Path,
+        expanded_offset: ExpandedOffset,
+    ) -> OriginalOffset {
+        self.fold(
+            source,
+            expanded_offset,
+            OriginalOffset::new(expanded_offset.get()),
+            |pos, adj, acc| {
+                if pos < expanded_offset {
+                    *acc = *acc - adj.delta_offset;
+                }
+                ControlFlow::Continue(())
+            },
+        )
     }
 
     /// Shared iteration kernel for
@@ -249,25 +306,26 @@ impl OffsetAdjustment {
     /// and [`get_original_offset`](Self::get_original_offset).
     ///
     /// Walks adjustments for `source` in insertion order, computing each adjustment's expanded
-    /// position (`original_offset + accumulated_delta`) and passing it along with `expanded_offset`
-    /// and the adjustment itself to `f`. The accumulated delta is advanced only when the expanded
-    /// position strictly precedes `expanded_offset`. `f` may return [`ControlFlow::Break`] to stop
-    /// early.
+    /// position (`original_offset + accumulated_delta`) and passing it to `f`. The accumulated
+    /// delta is advanced only when the expanded position strictly precedes `expanded_offset`.
+    /// `f` may return [`ControlFlow::Break`] to stop early.
     fn fold<'a, V>(
         &'a self,
         source: &Path,
-        expanded_offset: usize,
+        expanded_offset: ExpandedOffset,
         mut acc: V,
-        f: impl Fn(isize, usize, &'a Adjustment, &mut V) -> ControlFlow<()>,
+        f: impl Fn(ExpandedOffset, &'a Adjustment, &mut V) -> ControlFlow<()>,
     ) -> V {
-        let mut accumulated_delta: isize = 0;
+        let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_offset as isize + accumulated_delta;
-            match f(expanded_pos, expanded_offset, adj, &mut acc) {
+            let expanded_pos = ExpandedOffset::new(
+                (adj.original_offset.get() as isize + accumulated_delta) as usize,
+            );
+            match f(expanded_pos, adj, &mut acc) {
                 ControlFlow::Break(_) => return acc,
                 ControlFlow::Continue(_) => {}
             }
-            if expanded_pos < expanded_offset as isize {
+            if expanded_pos < expanded_offset {
                 accumulated_delta += adj.delta_offset;
             }
         }
@@ -296,19 +354,24 @@ mod tests {
     fn setup() -> OffsetAdjustment {
         let mut adj = OffsetAdjustment::default();
         let src = "contract Foo { \nfunction bar() public {\n }\n }";
-        let (offset, _) =
-            adj.record(Path::new("foo.sol"), 16, src, "\nfunction baz() public {\n }\n", "");
-        assert_eq!(offset, 16);
+        let (offset, _) = adj.record(
+            Path::new("foo.sol"),
+            OriginalOffset::new(16),
+            src,
+            "\nfunction baz() public {\n }\n",
+            "",
+        );
+        assert_eq!(offset.get(), 16);
         let mut modified = src.to_string();
         modified.insert_str(16, "\nfunction baz() public {\n }\n");
         let (offset, _) = adj.record(
             Path::new("foo.sol"),
-            16,
+            OriginalOffset::new(16),
             &modified,
             "\nfunction bingbong() public {\n }\n",
             "",
         );
-        assert_eq!(offset, 16 + 28);
+        assert_eq!(offset.get(), 16 + 28);
         adj
     }
 
@@ -318,13 +381,13 @@ mod tests {
         assert_eq!(adj.len(), 2);
         let (path, adjustment) = &adj[0];
         assert_eq!(path, Path::new("foo.sol"));
-        assert_eq!(adjustment.original_offset, 16);
+        assert_eq!(adjustment.original_offset.get(), 16);
         assert_eq!(adjustment.original_line, 2);
         assert_eq!(adjustment.delta_offset, 28);
         assert_eq!(adjustment.delta_line, 3);
         let (path2, adj2) = &adj[1];
         assert_eq!(path2, Path::new("foo.sol"));
-        assert_eq!(adj2.original_offset, 16);
+        assert_eq!(adj2.original_offset.get(), 16);
         assert_eq!(adj2.original_line, 2);
         assert_eq!(adj2.delta_offset, 33);
         assert_eq!(adj2.delta_line, 3);
@@ -335,17 +398,23 @@ mod tests {
         let adj = setup();
         // Original byte 16 is shifted forward by 28 + 33 = 61 bytes (two insertions).
         // Expanded byte 77 (= 16 + 61) must map back to original byte 16.
-        let offset = adj.get_original_offset(Path::new("foo.sol"), 77);
-        assert_eq!(offset, 16);
+        let offset = adj.get_original_offset(Path::new("foo.sol"), ExpandedOffset::new(77));
+        assert_eq!(offset.get(), 16);
     }
 
     #[test]
     fn test_find_macro_adjustment_by_offset() {
         let adj = setup();
         // Byte 20 falls inside Edit 1's inserted range [16, 44).
-        assert!(adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), 20).is_some());
+        assert!(
+            adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), ExpandedOffset::new(20))
+                .is_some()
+        );
         // Byte 77 is past both inserted ranges and belongs to original content.
-        assert!(adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), 77).is_none());
+        assert!(
+            adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), ExpandedOffset::new(77))
+                .is_none()
+        );
     }
 
     #[test]
@@ -357,20 +426,21 @@ mod tests {
         // 1 newline)
         let removed = "function bar() public {\n}\n";
         let added = "uint x;\n";
-        let (offset, _) = adj.record(Path::new("foo.sol"), 15, src, added, removed);
-        assert_eq!(offset, 15);
+        let (offset, _) =
+            adj.record(Path::new("foo.sol"), OriginalOffset::new(15), src, added, removed);
+        assert_eq!(offset.get(), 15);
 
         assert_eq!(adj.len(), 1);
         let (path, adjustment) = &adj[0];
         assert_eq!(path, Path::new("foo.sol"));
-        assert_eq!(adjustment.original_offset, 15);
+        assert_eq!(adjustment.original_offset.get(), 15);
         assert_eq!(adjustment.original_line, 2);
         assert_eq!(adjustment.delta_offset, -18); // 8 - 26
         assert_eq!(adjustment.delta_line, -1); // 1 - 2 newlines
 
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
-        assert_eq!(adj.adjusted_offset(Path::new("foo.sol"), 41), 23);
+        assert_eq!(adj.adjusted_offset(Path::new("foo.sol"), OriginalOffset::new(41)).get(), 23);
     }
 
     /// Regression test: `get_original_offset` must only subtract the delta of adjustments whose
@@ -386,13 +456,13 @@ mod tests {
     fn test_get_original_offset_ignores_later_adjustments() {
         let mut adj = OffsetAdjustment::default();
         let src = "0123456789";
-        adj.record(Path::new("x.sol"), 3, src, "AAA", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(3), src, "AAA", "");
         let mut after_a = src.to_string();
         after_a.insert_str(3, "AAA"); // "012AAA3456789"
-        adj.record(Path::new("x.sol"), 7, &after_a, "BBB", ""); // expanded at 10
+        adj.record(Path::new("x.sol"), OriginalOffset::new(7), &after_a, "BBB", ""); // expanded at 10
 
         // Expanded byte 8 is '5', which is original byte 5. Only A's delta applies.
-        assert_eq!(adj.get_original_offset(Path::new("x.sol"), 8), 5);
+        assert_eq!(adj.get_original_offset(Path::new("x.sol"), ExpandedOffset::new(8)).get(), 5);
     }
 
     /// Regression test for issue #26: a later-recorded adjustment with a lower `original_offset`
@@ -407,14 +477,20 @@ mod tests {
     fn test_out_of_order_adjustments_no_false_attribution() {
         let mut adj = OffsetAdjustment::default();
         let src = "0123456789abcdefghij"; // 20 bytes, no newlines
-        adj.record(Path::new("x.sol"), 10, src, "AAA", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(10), src, "AAA", "");
         let mut after_a = src.to_string();
         after_a.insert_str(10, "AAA");
-        adj.record(Path::new("x.sol"), 2, &after_a, "BBB", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(2), &after_a, "BBB", "");
 
         // Byte 4 falls inside B's expanded range [2, 5).
-        assert!(adj.find_macro_adjustment_by_offset(Path::new("x.sol"), 4).is_some());
+        assert!(
+            adj.find_macro_adjustment_by_offset(Path::new("x.sol"), ExpandedOffset::new(4))
+                .is_some()
+        );
         // Byte 5 is the first byte past B and before A — original content, not macro-generated.
-        assert!(adj.find_macro_adjustment_by_offset(Path::new("x.sol"), 5).is_none());
+        assert!(
+            adj.find_macro_adjustment_by_offset(Path::new("x.sol"), ExpandedOffset::new(5))
+                .is_none()
+        );
     }
 }
