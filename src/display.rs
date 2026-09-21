@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use foundry_common::sh_println;
 use foundry_compilers::artifacts::Sources;
 use glob::MatchOptions;
 
@@ -54,8 +55,8 @@ pub fn display_sources(root: &Path, glob: &str, sources: &Sources) -> eyre::Resu
     matched.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     for (relative, content) in &matched {
-        println!("=== {} ===", relative.display());
-        println!("{}", format_sol(content.as_str()));
+        sh_println!("=== {} ===", relative.display())?;
+        sh_println!("{}", format_sol(content.as_str()))?;
     }
 
     Ok(())
