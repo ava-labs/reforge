@@ -63,7 +63,9 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
 
     for (path, inserts) in insertions {
         for (offset, text) in inserts {
-            data.entry(&path, &text).insert(offset);
+            if let Some(e) = data.entry(&path, &text) {
+                e.insert(offset);
+            }
         }
     }
     Ok(())
@@ -140,7 +142,9 @@ fn get_id_or_revert(
     // offset adjustments automatically.
     for (path, inserts) in insertions {
         for (offset, text) in &inserts {
-            data.entry(&path, text).insert(*offset);
+            if let Some(e) = data.entry(&path, text) {
+                e.insert(*offset);
+            }
         }
     }
 
@@ -166,7 +170,9 @@ fn make_libraries_contracts(
 
         if comment_block.contains("#[derive(promote)]") {
             let lib_offset = (lib.span.lo().0 - source.file.start_pos.0) as usize;
-            data.entry(path, "contract").replace(lib_offset..lib_offset + "library".len());
+            if let Some(e) = data.entry(path, "contract") {
+                e.replace(lib_offset..lib_offset + "library".len());
+            }
         }
     }
     Ok(())
@@ -206,9 +212,11 @@ fn make_func_public(
                     format!("could not find visibility modifier '{visibility_keyword}' in function at offset {func_offset}")
                 ))?;
             let original_modifier_start = original_offset + modifier_local_offset;
-            data.entry(path, "public").replace(
-                original_modifier_start..original_modifier_start + visibility_keyword.len(),
-            );
+            if let Some(e) = data.entry(path, "public") {
+                e.replace(
+                    original_modifier_start..original_modifier_start + visibility_keyword.len(),
+                );
+            }
         }
     }
     Ok(())

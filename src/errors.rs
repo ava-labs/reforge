@@ -308,7 +308,10 @@ mod tests {
             (start..start + BODY.len(), loc)
         };
         let replacement = "{\n        return \"bad\";\n    }";
-        data.entry(&path, replacement).with("replace_body", Some(loc)).replace(range);
+        data.entry(&path, replacement)
+            .expect("Test failed")
+            .with("replace_body", Some(loc))
+            .replace(range);
         Ok(())
     }
 
@@ -326,7 +329,7 @@ mod tests {
             let Some(end) = content.find("        uint256 constant KEEP") else { return Ok(()) };
             start..end
         };
-        data.entry(&path, "").with("remove_block", None).replace(range);
+        data.entry(&path, "").expect("Test failed").with("remove_block", None).replace(range);
         Ok(())
     }
 
@@ -379,7 +382,10 @@ mod tests {
             } else {
                 "\n    function inserted() internal pure returns (uint256) { return 42; }\n"
             };
-            data.entry(path, func).with(macro_name, Some(original_loc)).insert(after_open_brace);
+            data.entry(path, func)
+                .expect("Test failed")
+                .with(macro_name, Some(original_loc))
+                .insert(after_open_brace);
         }
         Ok(())
     }
