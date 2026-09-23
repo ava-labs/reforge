@@ -421,11 +421,17 @@ pub fn get_comment(
     let path = source.file.name.as_real()?;
     let source_text = data.input.get(path)?.content.as_str();
     let original_offset = OriginalOffset::new((span.lo().0 - source.file.start_pos.0) as usize);
-    let adjusted = data.adjusted_offset(path, original_offset).get();
-    // Walk back to the start of the line
-    let line_start = source_text[..adjusted].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let adjusted = data.adjusted_offset(path, original_offset);
+    comment_before(source_text, adjusted)
+}
+
+/// Scans backward from `offset` in `source_text` and returns the contiguous comment block
+/// (lines starting with `//` or a `/* ... */` span) immediately preceding the line at `offset`.
+fn comment_before(source_text: &str, offset: ExpandedOffset) -> Option<String> {
+    // Walk back to the start of the line containing `offset`.
+    let line_start = source_text[..offset.get()].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let before = &source_text[..line_start];
-    let mut comment_block = String::new();
+    let mut rev_lines: Vec<&str> = Vec::new();
     let mut in_block_comment = false;
     // Walk backward over whitespace/newlines to find the preceding line(s)
     for l in before.lines().rev() {
@@ -434,15 +440,15 @@ pub fn get_comment(
             break;
         }
         if in_block_comment {
-            comment_block.insert_str(0, l);
+            rev_lines.push(l);
             if trimmed.starts_with("/*") {
                 break;
             }
         } else if trimmed.starts_with("//") {
-            comment_block.insert_str(0, l);
+            rev_lines.push(l);
         } else if trimmed.ends_with("*/") {
             in_block_comment = true;
-            comment_block.insert_str(0, l);
+            rev_lines.push(l);
             if trimmed.starts_with("/*") {
                 break;
             }
@@ -450,6 +456,64 @@ pub fn get_comment(
             break;
         }
     }
+    rev_lines.reverse();
+    let comment_block = rev_lines.join("\n");
     let trimmed = comment_block.trim_start();
     if trimmed.starts_with("//") || trimmed.starts_with("/*") { Some(comment_block) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::comment_before;
+    use crate::span_utils::ExpandedOffset;
+
+    fn offset_after(src: &str, marker: &str) -> ExpandedOffset {
+        ExpandedOffset::new(src.find(marker).unwrap() + marker.len())
+    }
+
+    #[test]
+    fn single_line_comment() {
+        let src = "// #[derive(Foo)]\nstruct Bar {}\n";
+        let off = offset_after(src, "\n");
+        assert_eq!(comment_before(src, off).as_deref(), Some("// #[derive(Foo)]"));
+    }
+
+    #[test]
+    fn multiline_comment_preserves_newlines() {
+        // Regression: insert_str(0, l) dropped the \n between lines, collapsing them.
+        let src = "// #[derive(get_id_or_revert(\n//   contract=Bar))]\nstruct Foo {}\n";
+        let off = offset_after(src, "))]\n");
+        let got = comment_before(src, off).unwrap();
+        assert_eq!(got, "// #[derive(get_id_or_revert(\n//   contract=Bar))]");
+    }
+
+    #[test]
+    fn block_comment_single_line() {
+        let src = "/* #[derive(Foo)] */\nstruct Bar {}\n";
+        let off = offset_after(src, "\n");
+        assert_eq!(comment_before(src, off).as_deref(), Some("/* #[derive(Foo)] */"));
+    }
+
+    #[test]
+    fn block_comment_multiline_preserves_newlines() {
+        // Regression: collapsing also affected /* */ spans.
+        let src = "/* #[derive(get_id_or_revert(\n   contract=Bar))] */\nstruct Foo {}\n";
+        let off = offset_after(src, "*/\n");
+        let got = comment_before(src, off).unwrap();
+        assert_eq!(got, "/* #[derive(get_id_or_revert(\n   contract=Bar))] */");
+    }
+
+    #[test]
+    fn no_preceding_comment_returns_none() {
+        let src = "uint256 x;\nstruct Bar {}\n";
+        let off = offset_after(src, "\n");
+        assert!(comment_before(src, off).is_none());
+    }
+
+    #[test]
+    fn blank_line_between_comment_and_item_returns_none() {
+        let src = "// comment\n\nstruct Bar {}\n";
+        let off = offset_after(src, "\n\n");
+        assert!(comment_before(src, off).is_none());
+    }
 }
