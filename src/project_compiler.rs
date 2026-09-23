@@ -176,8 +176,9 @@ impl ProjectCompiler {
 
             for (name, artifact_list) in artifacts {
                 for (path, artifact) in &artifact_list {
-                    let runtime_size = contract_size(*artifact, false).unwrap_or_default();
-                    let init_size = contract_size(*artifact, true).unwrap_or_default();
+                    let runtime_size =
+                        contract_size(*artifact, Bytecode::Runtime).unwrap_or_default();
+                    let init_size = contract_size(*artifact, Bytecode::Init).unwrap_or_default();
 
                     let is_dev_contract = artifact
                         .abi
@@ -226,12 +227,16 @@ impl ProjectCompiler {
     }
 }
 
+enum Bytecode {
+    Init,
+    Runtime,
+}
+
 /// Returns the deployed or init size of the contract.
-fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
-    let bytecode = if initcode {
-        artifact.get_bytecode_object()?
-    } else {
-        artifact.get_deployed_bytecode_object()?
+fn contract_size<T: Artifact>(artifact: &T, kind: Bytecode) -> Option<usize> {
+    let bytecode = match kind {
+        Bytecode::Init => artifact.get_bytecode_object()?,
+        Bytecode::Runtime => artifact.get_deployed_bytecode_object()?,
     };
 
     let size = match bytecode.as_ref() {

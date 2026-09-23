@@ -104,17 +104,13 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
-    /// The coverage reporters to use. Constructed from the other fields.
-    #[arg(skip)]
-    reporters: Vec<Box<dyn CoverageReporter>>,
-
     #[command(flatten)]
     test: TestArgs,
 }
 
 impl CoverageArgs {
     /// Runs the coverage pipeline, applying macro expansion during compilation.
-    pub async fn run(mut self, macros: crate::MacroRules) -> Result<()> {
+    pub async fn run(self, macros: crate::MacroRules) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
@@ -136,17 +132,7 @@ impl CoverageArgs {
         };
         let preprocessed_sources = preprocessed.lock().unwrap().take().map(|p| p.sources);
 
-        self.populate_reporters(&paths.root);
-
-        sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &mut output, preprocessed_sources)?;
-
-        sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, config, evm_opts).await
-    }
-
-    fn populate_reporters(&mut self, root: &Path) {
-        self.reporters = self
+        let reporters: Vec<Box<dyn CoverageReporter>> = self
             .report
             .iter()
             .map(|report_kind| match report_kind {
@@ -154,17 +140,24 @@ impl CoverageArgs {
                     Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
                 }
                 CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    let path = paths
+                        .root
+                        .join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
                     Box::new(LcovReporter::new(path, self.lcov_version.clone()))
                 }
                 CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
-                    root.to_path_buf(),
-                    root.join("bytecode-coverage"),
+                    paths.root.to_path_buf(),
+                    paths.root.join("bytecode-coverage"),
                 )),
                 CoverageReportKind::Debug => Box::new(DebugReporter),
             })
-            .collect::<Vec<_>>();
+            .collect();
+
+        sh_println!("Analysing contracts...")?;
+        let report = self.prepare(&paths, &mut output, preprocessed_sources, &reporters)?;
+
+        sh_println!("Running tests...")?;
+        self.collect(&paths.root, &output, report, config, evm_opts, reporters).await
     }
 
     /// Builds the project.
@@ -218,6 +211,7 @@ impl CoverageArgs {
         project_paths: &ProjectPathsConfig,
         output: &mut ProjectCompileOutput,
         preprocessed_sources: Option<Sources>,
+        reporters: &[Box<dyn CoverageReporter>],
     ) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
 
@@ -294,7 +288,7 @@ impl CoverageArgs {
             report.add_analysis(version.clone(), source_analysis);
         }
 
-        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+        if reporters.iter().any(|reporter| reporter.needs_source_maps()) {
             report.add_source_maps(artifacts.into_iter().map(|artifact| {
                 (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
             }));
@@ -311,6 +305,7 @@ impl CoverageArgs {
         mut report: CoverageReport,
         config: Config,
         evm_opts: EvmOpts,
+        mut reporters: Vec<Box<dyn CoverageReporter>>,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
         let outcome =
@@ -362,19 +357,14 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        self.report(&report)?;
+        for reporter in &mut reporters {
+            reporter.report(&report)?;
+        }
 
         // Check for test failures after generating coverage report.
         // This ensures coverage data is written even when tests fail.
         outcome.ensure_ok(false)?;
 
-        Ok(())
-    }
-
-    fn report(&mut self, report: &CoverageReport) -> Result<()> {
-        for reporter in &mut self.reporters {
-            reporter.report(report)?;
-        }
         Ok(())
     }
 }
@@ -466,19 +456,13 @@ fn build_expanded_compiler(
     sol_paths: &ProjectPathsConfig<SolcLanguage>,
 ) -> solar::sema::Compiler {
     let mut compiler = SolParser::new(sol_paths.with_language_ref()).into_compiler();
-    compiler.enter_mut(|compiler| {
-        let mut pcx = compiler.parse();
-        for (path, source) in preprocessed.iter() {
+    crate::solar_load_and_lower(
+        &mut compiler,
+        preprocessed.iter().map(|(path, source)| {
             let abs = if path.is_absolute() { path.clone() } else { root.join(path) };
-            if let Ok(src_file) =
-                compiler.sess().source_map().new_source_file(abs, source.content.as_str())
-            {
-                pcx.add_file(src_file);
-            }
-        }
-        pcx.parse();
-        let _ = compiler.lower_asts();
-    });
+            (abs, source.content.as_str())
+        }),
+    );
     compiler
 }
 

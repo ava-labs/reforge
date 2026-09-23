@@ -110,7 +110,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = crate::test::compile_and_run(&mut self.test, macros).await?;
+        let outcome = crate::test::compile_and_run(&self.test, macros).await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -450,23 +450,20 @@ fn diff(
     Ok(())
 }
 
-fn fmt_pct_change(change: f64) -> String {
-    let change_pct = change * 100.0;
-    match change.total_cmp(&0.0) {
-        Ordering::Less => format!("{change_pct:.3}%").green().to_string(),
-        Ordering::Equal => {
-            format!("{change_pct:.3}%")
-        }
-        Ordering::Greater => format!("{change_pct:.3}%").red().to_string(),
+fn colorize(ord: Ordering, s: String) -> String {
+    match ord {
+        Ordering::Less => s.green().to_string(),
+        Ordering::Equal => s,
+        Ordering::Greater => s.red().to_string(),
     }
 }
 
+fn fmt_pct_change(change: f64) -> String {
+    colorize(change.total_cmp(&0.0), format!("{:.3}%", change * 100.0))
+}
+
 fn fmt_change(change: i128) -> String {
-    match change.cmp(&0) {
-        Ordering::Less => format!("{change}").green().to_string(),
-        Ordering::Equal => change.to_string(),
-        Ordering::Greater => format!("{change}").red().to_string(),
-    }
+    colorize(change.cmp(&0), format!("{change}"))
 }
 
 /// Returns true of the difference between the gas values exceeds the tolerance

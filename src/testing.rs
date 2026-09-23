@@ -6,8 +6,9 @@
 use std::{collections::HashSet, path::Path};
 
 use foundry_compilers::{
-    ProjectPathsConfig, SourceParser,
+    Language, ProjectPathsConfig, SourceParser,
     artifacts::{SolcLanguage, Source, Sources},
+    utils::source_files_iter,
 };
 use solar::{parse::interface::Session, sema::Compiler};
 
@@ -15,30 +16,8 @@ use crate::{Macro, PreprocessingData};
 
 /// Loads all `.sol` files under `dir` into a `Sources` map keyed by absolute path.
 pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
-    let mut sources = Sources::new();
-    load_sol_sources_recursive(dir, &mut sources)?;
-    Ok(sources)
-}
-
-fn load_sol_sources_recursive(dir: &Path, sources: &mut Sources) -> eyre::Result<()> {
-    if dir.is_file() {
-        if dir.extension().is_some_and(|e| e == "sol") {
-            let src = Source::read(dir).map_err(|e| eyre::eyre!("{e}"))?;
-            sources.insert(dir.to_path_buf(), src);
-        }
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            load_sol_sources_recursive(&path, sources)?;
-        } else if path.extension().is_some_and(|e| e == "sol") {
-            let src = Source::read(&path).map_err(|e| eyre::eyre!("{e}"))?;
-            sources.insert(path, src);
-        }
-    }
-    Ok(())
+    Source::read_all(source_files_iter(dir, SolcLanguage::FILE_EXTENSIONS))
+        .map_err(|e| eyre::eyre!("{e}"))
 }
 
 /// Runs `macro_rules` over the Solidity sources in `source`, then compares the
@@ -63,7 +42,13 @@ pub fn test_macros(
 
     let mut failures: Vec<(std::path::PathBuf, String)> = Vec::new();
     for (actual_path, actual_src) in &sources {
-        let relative_path = actual_path.strip_prefix(source).unwrap();
+        let relative_path = actual_path.strip_prefix(source).map_err(|_| {
+            eyre::eyre!(
+                "expanded source path '{}' is not under source root '{}'",
+                actual_path.display(),
+                source.display()
+            )
+        })?;
         let expected_path = expected.join(relative_path);
         let actual_formatted = crate::display::format_sol(actual_src.content.as_str());
         let matches = expected_sources.get(&expected_path).is_some_and(|exp| {
@@ -144,38 +129,29 @@ pub fn expand_macros_with_sources(
         }
     };
 
+    crate::solar_load_and_lower(
+        &mut compiler,
+        sources.iter().map(|(p, s)| (p.clone(), s.content.as_str())),
+    );
+
+    let relative_paths_storage;
+    let src_dir = match paths {
+        Some(paths) => {
+            relative_paths_storage = paths.paths_relative();
+            &relative_paths_storage.sources
+        }
+        None => root,
+    };
+    let mut mocks = HashSet::new();
+    let mut data = PreprocessingData {
+        input: &mut sources,
+        root_dir: root,
+        src_dir,
+        mocks: &mut mocks,
+        offset_adjustments: Default::default(),
+    };
     compiler
         .enter_mut(|compiler| -> foundry_compilers::error::Result<()> {
-            let mut pcx = compiler.parse();
-            for (path, src) in sources.iter() {
-                if let Ok(src_file) =
-                    compiler.sess().source_map().new_source_file(path.clone(), src.content.as_str())
-                {
-                    pcx.add_file(src_file);
-                }
-            }
-            pcx.parse();
-            // lower_asts() may return Break when pre-expansion code references symbols that macros
-            // will inject. Run rules regardless — item/struct definitions are present in the
-            // partial HIR.
-            let _ = compiler.lower_asts();
-
-            let relative_paths_storage;
-            let src_dir = match paths {
-                Some(paths) => {
-                    relative_paths_storage = paths.paths_relative();
-                    &relative_paths_storage.sources
-                }
-                None => root,
-            };
-            let mut mocks = HashSet::new();
-            let mut data = PreprocessingData {
-                input: &mut sources,
-                root_dir: root,
-                src_dir,
-                mocks: &mut mocks,
-                offset_adjustments: Default::default(),
-            };
             let gcx = compiler.gcx();
             for rule in macro_rules {
                 rule(&gcx, &mut data)?;
