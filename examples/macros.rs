@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use foundry_compilers::error::SolcError;
-use reforge::{MacroRules, PreprocessingData, get_comment};
+use reforge::{MacroRules, OriginalOffset, PreprocessingData, get_comment};
 use solar::sema::{Gcx, hir::ContractKind};
 
 fn main() -> eyre::Result<()> {
@@ -25,7 +25,7 @@ fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> foundry_compilers::erro
 /// The function is injected into the pre-existing `{name}Library` library.
 fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(usize, String)>> = HashMap::new();
+    let mut insertions: HashMap<std::path::PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
 
     for struct_def in ctx.hir.structs() {
         let Some(source) = ctx.sources.get(struct_def.source) else {
@@ -53,7 +53,8 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset = (library.span.hi().0 - source.file.start_pos.0) as usize - 1;
+        let close_brace_offset =
+            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
         let func = format!(
             "\n    function print{name}() public pure returns (string memory) {{ return \"{name}\"; }}\n"
         );
@@ -78,7 +79,7 @@ fn get_id_or_revert(
     data: &mut PreprocessingData<'_>,
 ) -> foundry_compilers::error::Result<()> {
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(usize, String)>> = HashMap::new();
+    let mut insertions: HashMap<std::path::PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
         regex::Regex::new(r"#\[derive\(get_id_or_revert\(contract=(\w+)\)\)]").unwrap()
@@ -125,7 +126,8 @@ fn get_id_or_revert(
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset = (library.span.hi().0 - source.file.start_pos.0) as usize - 1;
+        let close_brace_offset =
+            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
         let func = if has_id_field {
             format!(
                 "\n    function getId{name}({name} memory obj) public pure returns (uint32) {{ return obj.ID; }}\n",
@@ -169,7 +171,8 @@ fn make_libraries_contracts(
         };
 
         if comment_block.contains("#[derive(promote)]") {
-            let lib_offset = (lib.span.lo().0 - source.file.start_pos.0) as usize;
+            let lib_offset =
+                OriginalOffset::new((lib.span.lo().0 - source.file.start_pos.0) as usize);
             if let Some(e) = data.entry(path, "contract") {
                 e.replace(lib_offset..lib_offset + "library".len());
             }
@@ -197,7 +200,8 @@ fn make_func_public(
 
         // Use convenience methods to compute offset adjustments automatically.
         if comment_block.contains("#[derive(public)]") {
-            let original_offset = (func.span.lo().0 - source.file.start_pos.0) as usize;
+            let original_offset =
+                OriginalOffset::new((func.span.lo().0 - source.file.start_pos.0) as usize);
             let func_offset = data.adjusted_offset(path, original_offset);
             let Some(src) = data.input.get(path) else {
                 continue;
@@ -206,10 +210,10 @@ fn make_func_public(
             // NOTE: `find` may match a false positive if the visibility keyword appears in a
             // parameter name or string literal before the actual modifier. If this becomes an
             // issue, narrow the search to the signature only (i.e. the text before the `{`).
-            let modifier_local_offset = src.content[func_offset..]
+            let modifier_local_offset = src.content[func_offset.get()..]
                 .find(visibility_keyword)
                 .ok_or_else(|| SolcError::msg(
-                    format!("could not find visibility modifier '{visibility_keyword}' in function at offset {func_offset}")
+                    format!("could not find visibility modifier '{visibility_keyword}' in function at offset {}", func_offset.get())
                 ))?;
             let original_modifier_start = original_offset + modifier_local_offset;
             if let Some(e) = data.entry(path, "public") {
