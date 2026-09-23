@@ -2,7 +2,7 @@
 // See the file LICENSE for licensing terms.
 
 use std::{
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -51,6 +51,10 @@ pub struct Adjustment {
     /// 1-based line number in the **original, unmodified** source corresponding to
     /// `original_offset`.
     pub original_line: usize,
+    /// Number of bytes added by this edit (`added.len()`), i.e. the length of the inserted
+    /// or replacement text. Used to determine whether an expanded offset falls inside the
+    /// span of bytes this edit introduced.
+    pub added_len: usize,
     /// Signed byte-length delta introduced by this edit (`added.len() - removed.len()`).
     pub delta_offset: isize,
     /// Net line delta introduced by this edit (newlines added minus newlines removed).
@@ -190,6 +194,7 @@ impl OffsetAdjustment {
             Adjustment {
                 original_offset,
                 original_line,
+                added_len: added.len(),
                 delta_offset,
                 delta_line,
                 macro_name: None,
@@ -199,40 +204,74 @@ impl OffsetAdjustment {
         (adjusted_offset, EditInfo { expanded_line: current_line, delta_lines: delta_line })
     }
 
-    /// Maps a line number in the macro-expanded source back to the corresponding line number
-    /// in the original source.
+    /// Returns the adjustment whose expanded byte range covers `expanded_offset` in `source`,
+    /// if any.
     ///
-    /// Walks the adjustments in order, tracking each insertion's expanded position. For each
-    /// adjustment whose expanded position precedes `line`, subtracts its `delta_line` from the
-    /// running total.
-    ///
-    /// Callers are responsible for ensuring `line` is not inside a macro-generated block (use
-    /// [`find_macro_adjustment`](Self::find_macro_adjustment) to check first).
-    pub fn get_original_line(&self, source: &Path, line: isize) -> usize {
-        let mut accumulated_delta = 0isize;
-        for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
-            if expanded_pos < line {
-                accumulated_delta += adj.delta_line;
+    /// Adjustments are walked in insertion order. The accumulated byte delta is only applied when
+    /// an adjustment's expanded position strictly precedes the query, which correctly handles
+    /// out-of-order insertions (a later-recorded adjustment with a lower `original_offset`).
+    pub fn find_macro_adjustment_by_offset(
+        &self,
+        source: &Path,
+        expanded_offset: usize,
+    ) -> Option<&Adjustment> {
+        self.fold(source, expanded_offset, None, |pos, off, adj, acc| {
+            if pos as usize <= off && (off as isize) < pos + adj.added_len as isize {
+                *acc = Some(adj);
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-        }
-        (line - accumulated_delta) as usize
+        })
     }
 
-    /// Returns the adjustment whose expanded line range covers `line` in `source`, if any.
+    /// Maps `expanded_offset` (a byte offset in the post-expansion source) back to the
+    /// corresponding byte offset in the original, unmodified source.
     ///
-    /// Used by error reporting to retrieve any macro attribution registered for the span
-    /// that produced a compiler error.
-    pub fn find_macro_adjustment(&self, source: &Path, line: isize) -> Option<&Adjustment> {
-        let mut accumulated_delta = 0isize;
-        for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = adj.original_line as isize + accumulated_delta;
-            if expanded_pos <= line && line < expanded_pos + adj.delta_line {
-                return Some(adj);
+    /// Walks adjustments in insertion order, subtracting each adjustment's `delta_offset` when
+    /// its expanded position strictly precedes the query. Returns `expanded_offset` unchanged
+    /// when no prior adjustments apply.
+    ///
+    /// The caller is responsible for ensuring `expanded_offset` is not inside a macro-generated
+    /// span (use [`find_macro_adjustment_by_offset`](Self::find_macro_adjustment_by_offset)
+    /// to check first).
+    pub fn get_original_offset(&self, source: &Path, expanded_offset: usize) -> usize {
+        self.fold(source, expanded_offset, expanded_offset as isize, |pos, off, adj, acc| {
+            if pos < off as isize {
+                *acc -= adj.delta_offset;
             }
-            accumulated_delta += adj.delta_line;
+            ControlFlow::Continue(())
+        }) as usize
+    }
+
+    /// Shared iteration kernel for
+    /// [`find_macro_adjustment_by_offset`](Self::find_macro_adjustment_by_offset)
+    /// and [`get_original_offset`](Self::get_original_offset).
+    ///
+    /// Walks adjustments for `source` in insertion order, computing each adjustment's expanded
+    /// position (`original_offset + accumulated_delta`) and passing it along with `expanded_offset`
+    /// and the adjustment itself to `f`. The accumulated delta is advanced only when the expanded
+    /// position strictly precedes `expanded_offset`. `f` may return [`ControlFlow::Break`] to stop
+    /// early.
+    fn fold<'a, V>(
+        &'a self,
+        source: &Path,
+        expanded_offset: usize,
+        mut acc: V,
+        f: impl Fn(isize, usize, &'a Adjustment, &mut V) -> ControlFlow<()>,
+    ) -> V {
+        let mut accumulated_delta: isize = 0;
+        for (_, adj) in self.iter().filter(|(p, _)| p == source) {
+            let expanded_pos = adj.original_offset as isize + accumulated_delta;
+            match f(expanded_pos, expanded_offset, adj, &mut acc) {
+                ControlFlow::Break(_) => return acc,
+                ControlFlow::Continue(_) => {}
+            }
+            if expanded_pos < expanded_offset as isize {
+                accumulated_delta += adj.delta_offset;
+            }
         }
-        None
+        acc
     }
 }
 
@@ -292,17 +331,21 @@ mod tests {
     }
 
     #[test]
-    fn test_get_original_line() {
+    fn test_get_original_offset() {
         let adj = setup();
-        let line = adj.get_original_line(Path::new("foo.sol"), 2 + 6);
-        assert_eq!(line, 2);
+        // Original byte 16 is shifted forward by 28 + 33 = 61 bytes (two insertions).
+        // Expanded byte 77 (= 16 + 61) must map back to original byte 16.
+        let offset = adj.get_original_offset(Path::new("foo.sol"), 77);
+        assert_eq!(offset, 16);
     }
 
     #[test]
-    fn test_is_macro() {
+    fn test_find_macro_adjustment_by_offset() {
         let adj = setup();
-        assert!(adj.find_macro_adjustment(Path::new("foo.sol"), 4).is_some());
-        assert!(adj.find_macro_adjustment(Path::new("foo.sol"), 8).is_none());
+        // Byte 20 falls inside Edit 1's inserted range [16, 44).
+        assert!(adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), 20).is_some());
+        // Byte 77 is past both inserted ranges and belongs to original content.
+        assert!(adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), 77).is_none());
     }
 
     #[test]
@@ -328,5 +371,50 @@ mod tests {
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
         assert_eq!(adj.adjusted_offset(Path::new("foo.sol"), 41), 23);
+    }
+
+    /// Regression test: `get_original_offset` must only subtract the delta of adjustments whose
+    /// expanded position is strictly before the query, not all adjustments in the file.
+    ///
+    /// Insertion order:
+    ///   A (original_offset=3, added_len=3): expanded range [3, 6),  delta=+3
+    ///   B (original_offset=7, added_len=3): expanded range [10, 13), delta=+3
+    ///
+    /// Query at expanded byte 8 (between A and B): only A's delta applies, so original = 8 - 3 = 5.
+    /// The bug subtracted both deltas, returning 8 - 3 - 3 = 2.
+    #[test]
+    fn test_get_original_offset_ignores_later_adjustments() {
+        let mut adj = OffsetAdjustment::default();
+        let src = "0123456789";
+        adj.record(Path::new("x.sol"), 3, src, "AAA", "");
+        let mut after_a = src.to_string();
+        after_a.insert_str(3, "AAA"); // "012AAA3456789"
+        adj.record(Path::new("x.sol"), 7, &after_a, "BBB", ""); // expanded at 10
+
+        // Expanded byte 8 is '5', which is original byte 5. Only A's delta applies.
+        assert_eq!(adj.get_original_offset(Path::new("x.sol"), 8), 5);
+    }
+
+    /// Regression test for issue #26: a later-recorded adjustment with a lower `original_offset`
+    /// must not cause `find_macro_adjustment_by_offset` to falsely attribute an offset that falls
+    /// between the two insertions.
+    ///
+    /// Insertion order:
+    ///   A (recorded first):  original_offset=10, added_len=3 → expanded range [10, 13)
+    ///   B (recorded second): original_offset=2,  added_len=3 → expanded range  [2,  5)
+    ///                        (A's delta doesn't shift B because A sits after B in expanded coords)
+    #[test]
+    fn test_out_of_order_adjustments_no_false_attribution() {
+        let mut adj = OffsetAdjustment::default();
+        let src = "0123456789abcdefghij"; // 20 bytes, no newlines
+        adj.record(Path::new("x.sol"), 10, src, "AAA", "");
+        let mut after_a = src.to_string();
+        after_a.insert_str(10, "AAA");
+        adj.record(Path::new("x.sol"), 2, &after_a, "BBB", "");
+
+        // Byte 4 falls inside B's expanded range [2, 5).
+        assert!(adj.find_macro_adjustment_by_offset(Path::new("x.sol"), 4).is_some());
+        // Byte 5 is the first byte past B and before A — original content, not macro-generated.
+        assert!(adj.find_macro_adjustment_by_offset(Path::new("x.sol"), 5).is_none());
     }
 }
