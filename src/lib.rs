@@ -149,17 +149,25 @@ impl<'pre> PreprocessingData<'pre> {
         self.offset_adjustments.adjusted_offset(path, original_offset)
     }
 
-    /// Returns a builder for inserting or replacing text in `path`.
+    /// Returns a builder for inserting or replacing text in `path`, or `None` if `path` is not
+    /// in the compilation input.
+    ///
+    /// Returns `None` when `path` belongs to a library dependency (e.g. `forge-std`) that
+    /// Solar resolved during import analysis but that is not part of the project's own source
+    /// files. Rules that iterate [`solar::sema::Gcx`] HIR items must handle this: the HIR is
+    /// wider than `data.input` and will include items whose source files are not editable.
     ///
     /// Call [`.with(name, loc)`](AdjustmentEntry::with) on the returned builder before
     /// [`.insert()`](AdjustmentEntry::insert) or [`.replace()`](AdjustmentEntry::replace) to
     /// attach macro attribution so that compiler errors in the generated code are reported with
     /// the macro name and (optionally) the original triggering location.
-    pub fn entry<'a>(&'a mut self, path: &'a Path, text: &'a str) -> AdjustmentEntry<'a>
+    pub fn entry<'a>(&'a mut self, path: &'a Path, text: &'a str) -> Option<AdjustmentEntry<'a>>
     where
         'pre: 'a,
     {
-        AdjustmentEntry::new(path, text, &mut *self.input, &mut self.offset_adjustments)
+        self.input.contains_key(path).then(|| {
+            AdjustmentEntry::new(path, text, &mut *self.input, &mut self.offset_adjustments)
+        })
     }
 }
 
