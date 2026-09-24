@@ -221,6 +221,9 @@ impl MacroRules {
 
         match args.forge {
             ForgeCommand::Intercept(test_args) => {
+                if args.display.is_some() {
+                    eyre::bail!("--display is only supported with the `build` subcommand");
+                }
                 test_args.global.init()?;
                 let macros = if !args.disable_macros {
                     if self.rules.is_empty() {
@@ -241,7 +244,7 @@ impl MacroRules {
 
                 if let Some(glob) = args.display {
                     let ForgeSubcommand::Build(build_args) = forge.cmd else {
-                        panic!("--display is only supported with the `build` subcommand");
+                        eyre::bail!("--display is only supported with the `build` subcommand");
                     };
                     let (root, sources) = self.expand_for_display(build_args)?;
                     return display::display_sources(&root, &glob, &sources);
