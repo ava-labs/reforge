@@ -44,6 +44,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 yansi = "1.0"
 
+[lints.clippy]
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
+
 [dev-dependencies]
 tempfile = "3"
 
