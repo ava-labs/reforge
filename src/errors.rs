@@ -34,25 +34,33 @@ pub enum ErrorSource {
 ///
 /// Attribution and remapping are driven by `source_location.start`, the byte offset Solc
 /// reports for the primary span.
-pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError, project_root: &Path) {
-    let Some(ref loc) = e.source_location else { return };
+pub fn correct_fmt_msg(
+    macros: &MacroRules,
+    e: &mut SolcError,
+    project_root: &Path,
+) -> eyre::Result<()> {
+    let Some(ref loc) = e.source_location else { return Ok(()) };
     if loc.start < 0 {
-        return;
+        return Ok(());
     }
     let source = Path::new(&loc.file);
     let expanded_start = loc.start as usize;
 
-    let error_source = macros.with_offset_adjustments(|adjustments| {
-        if let Some(adj) =
-            adjustments.find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))
-        {
-            ErrorSource::Macro { name: adj.macro_name.clone(), loc: adj.original_location.clone() }
-        } else {
-            let original_start =
-                adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start));
-            ErrorSource::RawSource { loc: original_start.get() }
-        }
-    });
+    let error_source =
+        macros.with_offset_adjustments(|adjustments| -> eyre::Result<ErrorSource> {
+            if let Some(adj) = adjustments
+                .find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))?
+            {
+                Ok(ErrorSource::Macro {
+                    name: adj.macro_name.clone(),
+                    loc: adj.original_location.clone(),
+                })
+            } else {
+                let original_start =
+                    adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start))?;
+                Ok(ErrorSource::RawSource { loc: original_start.get() })
+            }
+        })?;
 
     match error_source {
         ErrorSource::Macro { name, loc } => {
@@ -73,16 +81,21 @@ pub fn correct_fmt_msg(macros: &MacroRules, e: &mut SolcError, project_root: &Pa
         }
         ErrorSource::RawSource { .. } => {}
     }
+    Ok(())
 }
 
-/// Returns `(line, col)` — both 1-based — for `offset` in `content`.
-fn offset_to_line_col(content: &str, offset: usize) -> (usize, usize) {
+/// Returns `(line, col)` — both 1-based — for `offset` in `content`, or `None` if any
+/// arithmetic overflows (only possible for astronomically large files).
+fn offset_to_line_col(content: &str, offset: usize) -> Option<(usize, usize)> {
     let offset = offset.min(content.len());
     let before = &content[..offset];
-    let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-    let col = offset - line_start + 1;
-    (line, col)
+    let line = before.bytes().filter(|&b| b == b'\n').count().checked_add(1)?;
+    let line_start = match before.rfind('\n') {
+        Some(i) => i.checked_add(1)?,
+        None => 0,
+    };
+    let col = offset.checked_sub(line_start)?.checked_add(1)?;
+    Some((line, col))
 }
 
 /// Builds a Solc-style formatted error message pointing at `original_offset` in `source`.
@@ -100,11 +113,16 @@ fn render_remapped_frame(
     let Ok(content) = std::fs::read_to_string(&abs) else {
         return message.to_string();
     };
-    let (line, col) = offset_to_line_col(&content, original_offset);
+    let Some((line, col)) = offset_to_line_col(&content, original_offset) else {
+        return message.to_string();
+    };
     let arrow = format!(" --> {}:{}:{}:", source.display(), line, col);
     let width = line.to_string().len();
     let sep = format!("{:width$} |", "");
-    match content.lines().nth(line - 1) {
+    let Some(line_idx) = line.checked_sub(1) else {
+        return message.to_string();
+    };
+    match content.lines().nth(line_idx) {
         Some(line_text) => {
             let framed = format!("{line:>width$} | {line_text}");
             format!("{message}\n{arrow}\n{sep}\n{framed}\n{sep}")
@@ -131,9 +149,9 @@ fn format_macro_fmt_msg(
 ) -> String {
     let abs_file =
         if orig.file.is_absolute() { orig.file.clone() } else { project_root.join(&orig.file) };
-    let source_line = std::fs::read_to_string(&abs_file)
-        .ok()
-        .and_then(|content| content.lines().nth(orig.line - 1).map(|l| l.to_string()));
+    let source_line = std::fs::read_to_string(&abs_file).ok().and_then(|content| {
+        orig.line.checked_sub(1).and_then(|idx| content.lines().nth(idx)).map(|l| l.to_string())
+    });
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);
     let width = orig.line.to_string().len();
     let sep = format!("{:width$} |", "");
@@ -150,6 +168,7 @@ fn format_macro_fmt_msg(
 mod tests {
     use solar::sema::{Gcx, hir::ContractKind};
 
+    use super::offset_to_line_col;
     use crate::{Macro, MacroOriginalLocation, PreprocessingData, span_utils::OriginalOffset};
 
     /// Strips ANSI escape sequences from `s` so assertions can match plain text.
@@ -239,17 +258,18 @@ mod tests {
             let content = data.input.get(&path).unwrap().content.as_str();
             let Some(start) = content.find(BODY) else { return Ok(()) };
             let trigger = content.find("// #[replace_body]").unwrap_or(start);
-            let before = &content[..trigger];
-            let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-            let col = trigger - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            let (line, col) =
+                offset_to_line_col(content, trigger).expect("line/col overflow impossible in test");
             let loc = MacroOriginalLocation { file: path.clone(), line, col };
-            (OriginalOffset::new(start)..OriginalOffset::new(start + BODY.len()), loc)
+            let end = start.checked_add(BODY.len()).expect("offset overflow impossible in test");
+            (OriginalOffset::new(start)..OriginalOffset::new(end), loc)
         };
         let replacement = "{\n        return \"bad\";\n    }";
         data.entry(&path, replacement)
             .expect("Test failed")
             .with("replace_body", Some(loc))
-            .replace(range);
+            .replace(range)
+            .expect("replace failed in test");
         Ok(())
     }
 
@@ -267,7 +287,11 @@ mod tests {
             let Some(end) = content.find("        uint256 constant KEEP") else { return Ok(()) };
             OriginalOffset::new(start)..OriginalOffset::new(end)
         };
-        data.entry(&path, "").expect("Test failed").with("remove_block", None).replace(range);
+        data.entry(&path, "")
+            .expect("Test failed")
+            .with("remove_block", None)
+            .replace(range)
+            .expect("Test failed");
         Ok(())
     }
 
@@ -315,11 +339,14 @@ mod tests {
                 // Use the trigger comment as the attribution location, falling back to the
                 // library declaration if the comment is not found.
                 let trigger_offset = content.find("// #[insert_foo]").unwrap_or(start);
-                let before = &content[..trigger_offset];
-                let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-                let col = trigger_offset - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+                let (line, col) = offset_to_line_col(content, trigger_offset)
+                    .expect("line/col overflow impossible in test");
                 let loc = MacroOriginalLocation { file: path.to_path_buf(), line, col };
-                (OriginalOffset::new(start + rel + 1), loc)
+                let after = start
+                    .checked_add(rel)
+                    .and_then(|v| v.checked_add(1))
+                    .expect("offset overflow impossible in test");
+                (OriginalOffset::new(after), loc)
             };
 
             let func = format!(
@@ -328,7 +355,8 @@ mod tests {
             data.entry(path, &func)
                 .expect("Test failed")
                 .with(macro_name, Some(original_loc))
-                .insert(after_open_brace);
+                .insert(after_open_brace)
+                .expect("Test failed");
         }
         Ok(())
     }

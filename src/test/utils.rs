@@ -43,7 +43,8 @@ impl<'a> SuiteId<'a> {
     }
 
     pub(super) fn contract(&self) -> &'a str {
-        &self.key[self.colon + 1..]
+        let start = self.colon.checked_add(1).expect("colon index overflow");
+        &self.key[start..]
     }
 }
 
