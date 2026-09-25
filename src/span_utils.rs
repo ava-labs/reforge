@@ -3,12 +3,16 @@
 
 use std::{
     marker::PhantomData,
-    ops::{Add, ControlFlow, Deref, DerefMut, Range, Sub},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use foundry_compilers::artifacts::Sources;
+use solar::{
+    interface::{BytePos, source_map::SourceFile},
+    sema::hir::{Contract, Function},
+};
 
 pub trait OffsetType {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -39,21 +43,54 @@ impl<T: OffsetType> Offset<T> {
     }
 }
 
-impl<T: OffsetType> Add<usize> for Offset<T> {
-    type Output = Self;
+impl<T: OffsetType> Offset<T> {
+    pub fn checked_add(self, rhs: usize) -> Option<Self> {
+        self.get().checked_add(rhs).map(Self::new)
+    }
 
-    #[inline]
-    fn add(self, rhs: usize) -> Self::Output {
-        Self::new(self.get() + rhs)
+    pub fn checked_sub_isize(self, rhs: isize) -> Option<Self> {
+        let lhs = isize::try_from(self.get()).ok()?;
+        usize::try_from(lhs.checked_sub(rhs)?).ok().map(Self::new)
     }
 }
 
-impl<T: OffsetType> Sub<isize> for Offset<T> {
-    type Output = Self;
+impl OriginalOffset {
+    /// Converts a Solar [`BytePos`](BytePos) into an `OriginalOffset` relative
+    /// to the given source file's start position.
+    ///
+    /// Returns an error if the position precedes the file's start (malformed Solar span) or the
+    /// resulting value overflows `usize`.
+    pub fn from_solar_pos(file: &SourceFile, pos: BytePos) -> eyre::Result<Self> {
+        usize::try_from(file.relative_position(pos).0)
+            .map(Self::new)
+            .map_err(|_| eyre::eyre!("Solar BytePos overflows usize — malformed span"))
+    }
 
-    #[inline]
-    fn sub(self, rhs: isize) -> Self::Output {
-        Self::new((self.get() as isize - rhs) as usize)
+    /// Returns the byte offset of the closing `}` of a contract or library definition.
+    ///
+    /// Solar contract spans are half-open `[lo, hi)` and cover exactly the declaration up to and
+    /// including the closing `}`. `span.hi() - 1` is therefore the position of the `}` itself —
+    /// inserting text at this offset places it just before the closing brace.
+    ///
+    /// Returns an error if the span is malformed (zero-length or `hi()` overflows `usize`).
+    pub fn end_of_contract(file: &SourceFile, contract: &Contract<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, contract.span.hi())?
+            .checked_sub_isize(1)
+            .ok_or_else(|| eyre::eyre!("contract span has zero length — malformed Solar span"))
+    }
+
+    /// Returns the byte offset of the start of a contract or library definition (i.e. `span.lo()`).
+    ///
+    /// Returns an error if the span's start position overflows `usize`.
+    pub fn contract_offset(file: &SourceFile, contract: &Contract<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, contract.span.lo())
+    }
+
+    /// Returns the byte offset of the start of a function definition (i.e. `span.lo()`).
+    ///
+    /// Returns an error if the span's start position overflows `usize`.
+    pub fn func_offset(file: &SourceFile, func: &Function<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, func.span.lo())
     }
 }
 
@@ -153,18 +190,25 @@ impl<'a> AdjustmentEntry<'a> {
     /// `original_offset` must be a byte offset derived from a Solar HIR span (i.e. relative to
     /// the unmodified source). The method translates it to the current position in the
     /// already-modified text before performing the insertion.
-    pub fn insert(self, original_offset: OriginalOffset) -> EditInfo {
+    ///
+    /// Inserts `text` into the source file at the position corresponding to `original_offset`
+    /// in the original, unmodified source, and records the edit so that subsequent macro rules
+    /// remain correct.
+    ///
+    /// Returns an error if any byte-offset or line-count arithmetic overflows during adjustment
+    /// computation, which would indicate a corrupt or astronomically large source file.
+    pub fn insert(self, original_offset: OriginalOffset) -> eyre::Result<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
         let content = Arc::make_mut(&mut src.content);
         let (adjusted, info) =
-            offset_adjustments.record(path, original_offset, content.as_str(), text, "");
+            offset_adjustments.record(path, original_offset, content.as_str(), text, "")?;
         content.insert_str(adjusted.get(), text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
         }
-        info
+        Ok(info)
     }
 
     /// Replaces the source bytes at `original_range` (in the original, unmodified file) with
@@ -172,26 +216,32 @@ impl<'a> AdjustmentEntry<'a> {
     /// derived from the original source remain correct.
     ///
     /// Both range endpoints are translated through any previously recorded adjustments before the
-    /// replacement is applied. Does nothing and returns `None` if `original_range` is empty or
-    /// inverted.
-    pub fn replace(self, original_range: Range<OriginalOffset>) -> Option<EditInfo> {
+    /// replacement is applied. Does nothing and returns `Ok(None)` if `original_range` is empty or
+    /// inverted. Returns an error if byte-offset arithmetic overflows during adjustment
+    /// computation.
+    pub fn replace(self, original_range: Range<OriginalOffset>) -> eyre::Result<Option<EditInfo>> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
-            return None;
+            return Ok(None);
         }
-        let adjusted_start = offset_adjustments.adjusted_offset(path, original_range.start);
-        let adjusted_end = offset_adjustments.adjusted_offset(path, original_range.end);
+        let adjusted_start = offset_adjustments.adjusted_offset(path, original_range.start)?;
+        let adjusted_end = offset_adjustments.adjusted_offset(path, original_range.end)?;
         let src = sources.get_mut(path).unwrap();
         let content = Arc::make_mut(&mut src.content);
         let removed = content[adjusted_start.get()..adjusted_end.get()].to_owned();
-        let (_, info) =
-            offset_adjustments.record(path, original_range.start, content.as_str(), text, &removed);
+        let (_, info) = offset_adjustments.record(
+            path,
+            original_range.start,
+            content.as_str(),
+            text,
+            &removed,
+        )?;
         content.replace_range(adjusted_start.get()..adjusted_end.get(), text);
         if let Some((_, adj)) = offset_adjustments.last_mut() {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
         }
-        Some(info)
+        Ok(Some(info))
     }
 }
 
@@ -199,13 +249,25 @@ impl OffsetAdjustment {
     /// Returns the current offset in `path` corresponding to `original_offset` from the HIR,
     /// accounting for all length-changing edits recorded by previous macro rules. This is done
     /// by summing all offset deltas affecting the source code prior to the input `original_offset`.
-    pub fn adjusted_offset(&self, path: &Path, original_offset: OriginalOffset) -> ExpandedOffset {
-        let delta: isize = self
+    ///
+    /// Returns an error if the accumulated delta overflows `isize`, or if the final adjusted
+    /// offset is negative or exceeds `usize::MAX`.
+    pub fn adjusted_offset(
+        &self,
+        path: &Path,
+        original_offset: OriginalOffset,
+    ) -> eyre::Result<ExpandedOffset> {
+        let delta = self
             .iter()
             .filter(|(p, a)| p == path && a.original_offset <= original_offset)
-            .map(|(_, a)| a.delta_offset)
-            .sum();
-        ExpandedOffset::new((original_offset.get() as isize + delta) as usize)
+            .try_fold(0isize, |acc, (_, a)| acc.checked_add(a.delta_offset))
+            .ok_or_else(|| eyre::eyre!("offset delta overflow"))?;
+        let raw = isize::try_from(original_offset.get())
+            .ok()
+            .and_then(|v| v.checked_add(delta))
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| eyre::eyre!("adjusted offset out of range"))?;
+        Ok(ExpandedOffset::new(raw))
     }
 
     /// Records an edit in `path` at `original_offset` in the original source and returns the
@@ -217,6 +279,8 @@ impl OffsetAdjustment {
     /// `original_line` is derived by counting newlines in `source` up to the adjusted offset and
     /// subtracting accumulated line deltas from all previously recorded edits at or before
     /// `original_offset`, mapping the current position back to original-source coordinates.
+    /// Returns an error if any arithmetic overflows. See
+    /// [`adjusted_offset`](Self::adjusted_offset).
     fn record(
         &mut self,
         path: &Path,
@@ -224,19 +288,32 @@ impl OffsetAdjustment {
         source: &str,
         added: &str,
         removed: &str,
-    ) -> (ExpandedOffset, EditInfo) {
-        let adjusted_offset = self.adjusted_offset(path, original_offset);
-        let current_line =
-            source[..adjusted_offset.get()].bytes().filter(|&b| b == b'\n').count() as isize + 1;
-        let accumulated_line_delta: isize = self
+    ) -> eyre::Result<(ExpandedOffset, EditInfo)> {
+        let adjusted_offset = self.adjusted_offset(path, original_offset)?;
+        let newline_count = source[..adjusted_offset.get()].bytes().filter(|&b| b == b'\n').count();
+        let current_line = isize::try_from(newline_count)
+            .ok()
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| eyre::eyre!("line count overflow"))?;
+        let accumulated_line_delta = self
             .iter()
             .filter(|(p, a)| p.as_path() == path && a.original_offset <= original_offset)
-            .map(|(_, a)| a.delta_line)
-            .sum();
-        let original_line = (current_line - accumulated_line_delta) as usize;
-        let delta_offset = added.len() as isize - removed.len() as isize;
-        let delta_line = added.bytes().filter(|&b| b == b'\n').count() as isize
-            - removed.bytes().filter(|&b| b == b'\n').count() as isize;
+            .try_fold(0isize, |acc, (_, a)| acc.checked_add(a.delta_line))
+            .ok_or_else(|| eyre::eyre!("accumulated line delta overflow"))?;
+        let original_line = current_line
+            .checked_sub(accumulated_line_delta)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| eyre::eyre!("original line underflow"))?;
+        let delta_offset = isize::try_from(added.len())
+            .ok()
+            .zip(isize::try_from(removed.len()).ok())
+            .and_then(|(a, r)| a.checked_sub(r))
+            .ok_or_else(|| eyre::eyre!("delta_offset overflow"))?;
+        let delta_line = isize::try_from(added.bytes().filter(|&b| b == b'\n').count())
+            .ok()
+            .zip(isize::try_from(removed.bytes().filter(|&b| b == b'\n').count()).ok())
+            .and_then(|(a, r)| a.checked_sub(r))
+            .ok_or_else(|| eyre::eyre!("delta_line overflow"))?;
         self.push((
             path.to_path_buf(),
             Adjustment {
@@ -249,7 +326,7 @@ impl OffsetAdjustment {
                 original_location: None,
             },
         ));
-        (adjusted_offset, EditInfo { expanded_line: current_line, delta_lines: delta_line })
+        Ok((adjusted_offset, EditInfo { expanded_line: current_line, delta_lines: delta_line }))
     }
 
     /// Returns the adjustment whose expanded byte range covers `expanded_offset` in `source`,
@@ -258,17 +335,23 @@ impl OffsetAdjustment {
     /// Adjustments are walked in insertion order. The accumulated byte delta is only applied when
     /// an adjustment's expanded position strictly precedes the query, which correctly handles
     /// out-of-order insertions (a later-recorded adjustment with a lower `original_offset`).
+    ///
+    /// Returns an error if any byte-offset arithmetic overflows. See
+    /// [`adjusted_offset`](Self::adjusted_offset).
     pub fn find_macro_adjustment_by_offset(
         &self,
         source: &Path,
         expanded_offset: ExpandedOffset,
-    ) -> Option<&Adjustment> {
+    ) -> eyre::Result<Option<&Adjustment>> {
         self.fold(source, expanded_offset, None, |pos, adj, acc| {
-            if pos <= expanded_offset && expanded_offset < pos + adj.added_len {
+            let end = pos
+                .checked_add(adj.added_len)
+                .ok_or_else(|| eyre::eyre!("adjustment end offset overflow"))?;
+            if pos <= expanded_offset && expanded_offset < end {
                 *acc = Some(adj);
-                ControlFlow::Break(())
+                Ok(ControlFlow::Break(()))
             } else {
-                ControlFlow::Continue(())
+                Ok(ControlFlow::Continue(()))
             }
         })
     }
@@ -283,20 +366,25 @@ impl OffsetAdjustment {
     /// The caller is responsible for ensuring `expanded_offset` is not inside a macro-generated
     /// span (use [`find_macro_adjustment_by_offset`](Self::find_macro_adjustment_by_offset)
     /// to check first).
+    ///
+    /// Returns an error if any byte-offset arithmetic overflows. See
+    /// [`adjusted_offset`](Self::adjusted_offset).
     pub fn get_original_offset(
         &self,
         source: &Path,
         expanded_offset: ExpandedOffset,
-    ) -> OriginalOffset {
+    ) -> eyre::Result<OriginalOffset> {
         self.fold(
             source,
             expanded_offset,
             OriginalOffset::new(expanded_offset.get()),
             |pos, adj, acc| {
                 if pos < expanded_offset {
-                    *acc = *acc - adj.delta_offset;
+                    *acc = acc
+                        .checked_sub_isize(adj.delta_offset)
+                        .ok_or_else(|| eyre::eyre!("original offset underflow"))?;
                 }
-                ControlFlow::Continue(())
+                Ok(ControlFlow::Continue(()))
             },
         )
     }
@@ -308,28 +396,33 @@ impl OffsetAdjustment {
     /// Walks adjustments for `source` in insertion order, computing each adjustment's expanded
     /// position (`original_offset + accumulated_delta`) and passing it to `f`. The accumulated
     /// delta is advanced only when the expanded position strictly precedes `expanded_offset`.
-    /// `f` may return [`ControlFlow::Break`] to stop early.
+    /// `f` returns `Ok(ControlFlow::Break(()))` to stop early, or an error to abort.
     fn fold<'a, V>(
         &'a self,
         source: &Path,
         expanded_offset: ExpandedOffset,
         mut acc: V,
-        f: impl Fn(ExpandedOffset, &'a Adjustment, &mut V) -> ControlFlow<()>,
-    ) -> V {
+        f: impl Fn(ExpandedOffset, &'a Adjustment, &mut V) -> eyre::Result<ControlFlow<()>>,
+    ) -> eyre::Result<V> {
         let mut accumulated_delta = 0isize;
         for (_, adj) in self.iter().filter(|(p, _)| p == source) {
-            let expanded_pos = ExpandedOffset::new(
-                (adj.original_offset.get() as isize + accumulated_delta) as usize,
-            );
-            match f(expanded_pos, adj, &mut acc) {
-                ControlFlow::Break(_) => return acc,
+            let expanded_pos = isize::try_from(adj.original_offset.get())
+                .ok()
+                .and_then(|v| v.checked_add(accumulated_delta))
+                .and_then(|v| usize::try_from(v).ok())
+                .map(ExpandedOffset::new)
+                .ok_or_else(|| eyre::eyre!("expanded position overflow"))?;
+            match f(expanded_pos, adj, &mut acc)? {
+                ControlFlow::Break(_) => return Ok(acc),
                 ControlFlow::Continue(_) => {}
             }
             if expanded_pos < expanded_offset {
-                accumulated_delta += adj.delta_offset;
+                accumulated_delta = accumulated_delta
+                    .checked_add(adj.delta_offset)
+                    .ok_or_else(|| eyre::eyre!("accumulated delta overflow"))?;
             }
         }
-        acc
+        Ok(acc)
     }
 }
 
@@ -354,23 +447,27 @@ mod tests {
     fn setup() -> OffsetAdjustment {
         let mut adj = OffsetAdjustment::default();
         let src = "contract Foo { \nfunction bar() public {\n }\n }";
-        let (offset, _) = adj.record(
-            Path::new("foo.sol"),
-            OriginalOffset::new(16),
-            src,
-            "\nfunction baz() public {\n }\n",
-            "",
-        );
+        let (offset, _) = adj
+            .record(
+                Path::new("foo.sol"),
+                OriginalOffset::new(16),
+                src,
+                "\nfunction baz() public {\n }\n",
+                "",
+            )
+            .expect("Test failed");
         assert_eq!(offset.get(), 16);
         let mut modified = src.to_string();
         modified.insert_str(16, "\nfunction baz() public {\n }\n");
-        let (offset, _) = adj.record(
-            Path::new("foo.sol"),
-            OriginalOffset::new(16),
-            &modified,
-            "\nfunction bingbong() public {\n }\n",
-            "",
-        );
+        let (offset, _) = adj
+            .record(
+                Path::new("foo.sol"),
+                OriginalOffset::new(16),
+                &modified,
+                "\nfunction bingbong() public {\n }\n",
+                "",
+            )
+            .expect("Test failed");
         assert_eq!(offset.get(), 16 + 28);
         adj
     }
@@ -398,7 +495,9 @@ mod tests {
         let adj = setup();
         // Original byte 16 is shifted forward by 28 + 33 = 61 bytes (two insertions).
         // Expanded byte 77 (= 16 + 61) must map back to original byte 16.
-        let offset = adj.get_original_offset(Path::new("foo.sol"), ExpandedOffset::new(77));
+        let offset = adj
+            .get_original_offset(Path::new("foo.sol"), ExpandedOffset::new(77))
+            .expect("Test failed");
         assert_eq!(offset.get(), 16);
     }
 
@@ -408,11 +507,13 @@ mod tests {
         // Byte 20 falls inside Edit 1's inserted range [16, 44).
         assert!(
             adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), ExpandedOffset::new(20))
+                .expect("Test failed")
                 .is_some()
         );
         // Byte 77 is past both inserted ranges and belongs to original content.
         assert!(
             adj.find_macro_adjustment_by_offset(Path::new("foo.sol"), ExpandedOffset::new(77))
+                .expect("Test failed")
                 .is_none()
         );
     }
@@ -426,8 +527,9 @@ mod tests {
         // 1 newline)
         let removed = "function bar() public {\n}\n";
         let added = "uint x;\n";
-        let (offset, _) =
-            adj.record(Path::new("foo.sol"), OriginalOffset::new(15), src, added, removed);
+        let (offset, _) = adj
+            .record(Path::new("foo.sol"), OriginalOffset::new(15), src, added, removed)
+            .expect("Test failed");
         assert_eq!(offset.get(), 15);
 
         assert_eq!(adj.len(), 1);
@@ -440,7 +542,12 @@ mod tests {
 
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
-        assert_eq!(adj.adjusted_offset(Path::new("foo.sol"), OriginalOffset::new(41)).get(), 23);
+        assert_eq!(
+            adj.adjusted_offset(Path::new("foo.sol"), OriginalOffset::new(41))
+                .expect("Test failed")
+                .get(),
+            23
+        );
     }
 
     /// Regression test: `get_original_offset` must only subtract the delta of adjustments whose
@@ -456,13 +563,20 @@ mod tests {
     fn test_get_original_offset_ignores_later_adjustments() {
         let mut adj = OffsetAdjustment::default();
         let src = "0123456789";
-        adj.record(Path::new("x.sol"), OriginalOffset::new(3), src, "AAA", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(3), src, "AAA", "")
+            .expect("Test failed");
         let mut after_a = src.to_string();
         after_a.insert_str(3, "AAA"); // "012AAA3456789"
-        adj.record(Path::new("x.sol"), OriginalOffset::new(7), &after_a, "BBB", ""); // expanded at 10
+        adj.record(Path::new("x.sol"), OriginalOffset::new(7), &after_a, "BBB", "")
+            .expect("Test failed"); // expanded at 10
 
         // Expanded byte 8 is '5', which is original byte 5. Only A's delta applies.
-        assert_eq!(adj.get_original_offset(Path::new("x.sol"), ExpandedOffset::new(8)).get(), 5);
+        assert_eq!(
+            adj.get_original_offset(Path::new("x.sol"), ExpandedOffset::new(8))
+                .expect("Test failed")
+                .get(),
+            5
+        );
     }
 
     /// Regression test for issue #26: a later-recorded adjustment with a lower `original_offset`
@@ -477,19 +591,23 @@ mod tests {
     fn test_out_of_order_adjustments_no_false_attribution() {
         let mut adj = OffsetAdjustment::default();
         let src = "0123456789abcdefghij"; // 20 bytes, no newlines
-        adj.record(Path::new("x.sol"), OriginalOffset::new(10), src, "AAA", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(10), src, "AAA", "")
+            .expect("Test failed");
         let mut after_a = src.to_string();
         after_a.insert_str(10, "AAA");
-        adj.record(Path::new("x.sol"), OriginalOffset::new(2), &after_a, "BBB", "");
+        adj.record(Path::new("x.sol"), OriginalOffset::new(2), &after_a, "BBB", "")
+            .expect("Test failed");
 
         // Byte 4 falls inside B's expanded range [2, 5).
         assert!(
             adj.find_macro_adjustment_by_offset(Path::new("x.sol"), ExpandedOffset::new(4))
+                .expect("Test failed")
                 .is_some()
         );
         // Byte 5 is the first byte past B and before A — original content, not macro-generated.
         assert!(
             adj.find_macro_adjustment_by_offset(Path::new("x.sol"), ExpandedOffset::new(5))
+                .expect("Test failed")
                 .is_none()
         );
     }

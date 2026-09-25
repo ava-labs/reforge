@@ -148,7 +148,11 @@ pub struct PreprocessingData<'pre> {
 }
 
 impl<'pre> PreprocessingData<'pre> {
-    pub fn adjusted_offset(&self, path: &Path, original_offset: OriginalOffset) -> ExpandedOffset {
+    pub fn adjusted_offset(
+        &self,
+        path: &Path,
+        original_offset: OriginalOffset,
+    ) -> eyre::Result<ExpandedOffset> {
         self.offset_adjustments.adjusted_offset(path, original_offset)
     }
 
@@ -423,8 +427,14 @@ pub fn get_comment(
     let source = ctx.sources.get(source_id)?;
     let path = source.file.name.as_real()?;
     let source_text = data.input.get(path)?.content.as_str();
-    let original_offset = OriginalOffset::new((span.lo().0 - source.file.start_pos.0) as usize);
-    let adjusted = data.adjusted_offset(path, original_offset);
+    let span_offset = span
+        .lo()
+        .0
+        .checked_sub(source.file.start_pos.0)
+        .expect("span.lo() is always >= file start_pos — Solar invariant");
+    let original_offset =
+        OriginalOffset::new(usize::try_from(span_offset).expect("u32 fits in usize"));
+    let adjusted = data.adjusted_offset(path, original_offset).ok()?;
     comment_before(source_text, adjusted)
 }
 
@@ -432,7 +442,10 @@ pub fn get_comment(
 /// (lines starting with `//` or a `/* ... */` span) immediately preceding the line at `offset`.
 fn comment_before(source_text: &str, offset: ExpandedOffset) -> Option<String> {
     // Walk back to the start of the line containing `offset`.
-    let line_start = source_text[..offset.get()].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_start = match source_text[..offset.get()].rfind('\n') {
+        Some(i) => i.checked_add(1)?,
+        None => 0,
+    };
     let before = &source_text[..line_start];
     let mut rev_lines: Vec<&str> = Vec::new();
     let mut in_block_comment = false;
@@ -471,7 +484,8 @@ mod tests {
     use crate::span_utils::ExpandedOffset;
 
     fn offset_after(src: &str, marker: &str) -> ExpandedOffset {
-        ExpandedOffset::new(src.find(marker).unwrap() + marker.len())
+        let pos = src.find(marker).expect("Test failed");
+        ExpandedOffset::new(pos.checked_add(marker.len()).expect("Test failed"))
     }
 
     #[test]

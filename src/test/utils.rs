@@ -43,7 +43,8 @@ impl<'a> SuiteId<'a> {
     }
 
     pub(super) fn contract(&self) -> &'a str {
-        &self.key[self.colon + 1..]
+        let start = self.colon.checked_add(1).expect("colon index overflow");
+        &self.key[start..]
     }
 }
 
@@ -228,6 +229,9 @@ impl StderrSilencer {
         };
         // SAFETY: open /dev/null for writing, then redirect stderr to it.
         unsafe {
+            #[allow(clippy::as_conversions)]
+            // CStr::as_ptr() returns *const u8; libc::open requires *const c_char. This
+            // pointer-to-pointer cast is the standard FFI pattern for passing C strings.
             let null_fd = libc::open(c"/dev/null".as_ptr() as *const libc::c_char, libc::O_WRONLY);
             assert!(null_fd >= 0, "open(/dev/null) failed");
             let null_owned = OwnedFd::from_raw_fd(null_fd);
@@ -342,7 +346,7 @@ pub fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) 
     junit_report.set_timestamp(Utc::now());
     for (suite_name, suite_result) in results {
         let mut test_suite = TestSuite::new(suite_name);
-        total_duration += suite_result.duration;
+        total_duration = total_duration.saturating_add(suite_result.duration);
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {

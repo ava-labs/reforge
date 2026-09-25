@@ -79,7 +79,7 @@ impl ProjectCompiler {
             // Remap solc error line numbers from expanded source back to original source.
             for error in output.output_mut().errors.iter_mut() {
                 if let MultiCompilerError::Solc(e) = error {
-                    crate::errors::correct_fmt_msg(&macros, e, &project_root);
+                    crate::errors::correct_fmt_msg(&macros, e, &project_root)?;
                 }
             }
 
@@ -244,12 +244,10 @@ fn contract_size<T: Artifact>(artifact: &T, kind: Bytecode) -> Option<usize> {
         BytecodeObject::Unlinked(unlinked) => {
             // we don't need to account for placeholders here, because library placeholders take up
             // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
-            let mut size = unlinked.len();
-            if unlinked.starts_with("0x") {
-                size -= 2;
-            }
+            let size = unlinked.len();
+            let size = if unlinked.starts_with("0x") { size.checked_sub(2)? } else { size };
             // hex -> bytes
-            size / 2
+            size.checked_div(2)?
         }
     };
 
