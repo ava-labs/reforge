@@ -137,7 +137,8 @@ impl CoverageArgs {
             .iter()
             .map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
-                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                    let r: Box<dyn CoverageReporter> = Box::<CoverageSummaryReporter>::default();
+                    r
                 }
                 CoverageReportKind::Lcov => {
                     let path = paths
@@ -245,7 +246,11 @@ impl CoverageArgs {
                 continue;
             }
 
-            report.add_source(version.clone(), source_file.id as usize, path.clone());
+            report.add_source(
+                version.clone(),
+                usize::try_from(source_file.id).expect("u32 fits in usize"),
+                path.clone(),
+            );
 
             // Filter out libs dependencies and tests.
             if (!self.include_libs && project_paths.has_library_ancestor(path))

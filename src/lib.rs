@@ -427,7 +427,13 @@ pub fn get_comment(
     let source = ctx.sources.get(source_id)?;
     let path = source.file.name.as_real()?;
     let source_text = data.input.get(path)?.content.as_str();
-    let original_offset = OriginalOffset::new((span.lo().0 - source.file.start_pos.0) as usize);
+    let span_offset = span
+        .lo()
+        .0
+        .checked_sub(source.file.start_pos.0)
+        .expect("span.lo() is always >= file start_pos — Solar invariant");
+    let original_offset =
+        OriginalOffset::new(usize::try_from(span_offset).expect("u32 fits in usize"));
     let adjusted = data.adjusted_offset(path, original_offset).ok()?;
     comment_before(source_text, adjusted)
 }
