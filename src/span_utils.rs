@@ -9,6 +9,10 @@ use std::{
 };
 
 use foundry_compilers::artifacts::Sources;
+use solar::{
+    interface::{BytePos, source_map::SourceFile},
+    sema::hir::{Contract, Function},
+};
 
 pub trait OffsetType {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -47,6 +51,46 @@ impl<T: OffsetType> Offset<T> {
     pub fn checked_sub_isize(self, rhs: isize) -> Option<Self> {
         let lhs = isize::try_from(self.get()).ok()?;
         usize::try_from(lhs.checked_sub(rhs)?).ok().map(Self::new)
+    }
+}
+
+impl OriginalOffset {
+    /// Converts a Solar [`BytePos`](BytePos) into an `OriginalOffset` relative
+    /// to the given source file's start position.
+    ///
+    /// Returns an error if the position precedes the file's start (malformed Solar span) or the
+    /// resulting value overflows `usize`.
+    pub fn from_solar_pos(file: &SourceFile, pos: BytePos) -> eyre::Result<Self> {
+        usize::try_from(file.relative_position(pos).0)
+            .map(Self::new)
+            .map_err(|_| eyre::eyre!("Solar BytePos overflows usize — malformed span"))
+    }
+
+    /// Returns the byte offset of the closing `}` of a contract or library definition.
+    ///
+    /// Solar contract spans are half-open `[lo, hi)` and cover exactly the declaration up to and
+    /// including the closing `}`. `span.hi() - 1` is therefore the position of the `}` itself —
+    /// inserting text at this offset places it just before the closing brace.
+    ///
+    /// Returns an error if the span is malformed (zero-length or `hi()` overflows `usize`).
+    pub fn end_of_contract(file: &SourceFile, contract: &Contract<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, contract.span.hi())?
+            .checked_sub_isize(1)
+            .ok_or_else(|| eyre::eyre!("contract span has zero length — malformed Solar span"))
+    }
+
+    /// Returns the byte offset of the start of a contract or library definition (i.e. `span.lo()`).
+    ///
+    /// Returns an error if the span's start position overflows `usize`.
+    pub fn contract_offset(file: &SourceFile, contract: &Contract<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, contract.span.lo())
+    }
+
+    /// Returns the byte offset of the start of a function definition (i.e. `span.lo()`).
+    ///
+    /// Returns an error if the span's start position overflows `usize`.
+    pub fn func_offset(file: &SourceFile, func: &Function<'_>) -> eyre::Result<Self> {
+        Self::from_solar_pos(file, func.span.lo())
     }
 }
 

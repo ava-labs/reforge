@@ -333,7 +333,9 @@ mod tests {
                 continue;
             }
 
-            let start = (contract.span.lo().0 - source.file.start_pos.0) as usize;
+            let start = OriginalOffset::contract_offset(&source.file, contract)
+                .expect("Solar HIR contract spans always lie within their source file")
+                .get();
             let (after_open_brace, original_loc) = {
                 let content = data.input.get(path).unwrap().content.as_str();
                 let Some(rel) = content[start..].find('{') else { continue };

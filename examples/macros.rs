@@ -53,8 +53,8 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset =
-            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
+        let close_brace_offset = OriginalOffset::end_of_contract(&source.file, library)
+            .map_err(|e| SolcError::msg(e.to_string()))?;
         let func = format!(
             "\n    function print{name}() public pure returns (string memory) {{ return \"{name}\"; }}\n"
         );
@@ -126,8 +126,8 @@ fn get_id_or_revert(
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset =
-            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
+        let close_brace_offset = OriginalOffset::end_of_contract(&source.file, library)
+            .map_err(|e| SolcError::msg(e.to_string()))?;
         let func = if has_id_field {
             format!(
                 "\n    function getId{name}({name} memory obj) public pure returns (uint32) {{ return obj.ID; }}\n",
@@ -171,8 +171,8 @@ fn make_libraries_contracts(
         };
 
         if comment_block.contains("#[derive(promote)]") {
-            let lib_offset =
-                OriginalOffset::new((lib.span.lo().0 - source.file.start_pos.0) as usize);
+            let lib_offset = OriginalOffset::contract_offset(&source.file, lib)
+                .map_err(|e| SolcError::msg(e.to_string()))?;
             let end = lib_offset
                 .checked_add("library".len())
                 .ok_or_else(|| SolcError::msg("offset overflow computing library keyword end"))?;
@@ -203,8 +203,8 @@ fn make_func_public(
 
         // Use convenience methods to compute offset adjustments automatically.
         if comment_block.contains("#[derive(public)]") {
-            let original_offset =
-                OriginalOffset::new((func.span.lo().0 - source.file.start_pos.0) as usize);
+            let original_offset = OriginalOffset::func_offset(&source.file, func)
+                .map_err(|e| SolcError::msg(e.to_string()))?;
             let func_offset = data
                 .adjusted_offset(path, original_offset)
                 .map_err(|e| SolcError::msg(e.to_string()))?;
