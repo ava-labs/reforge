@@ -216,10 +216,14 @@ impl GasSnapshotDiff {
     /// `> 0` if the source used more gas
     /// `< 0` if the target used more gas
     fn gas_change(&self) -> i128 {
-        self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
+        i128::from(self.source_gas_used.gas())
+            .saturating_sub(i128::from(self.target_gas_used.gas()))
     }
 
     /// Determines the percentage change
+    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+    // i128/u64 → f64 is intentionally lossy (acceptable for percentage display);
+    // float division is guarded by the caller against zero denominators.
     fn gas_diff(&self) -> f64 {
         self.gas_change() as f64 / self.target_gas_used.gas() as f64
     }
@@ -354,9 +358,9 @@ fn diff(
         }
     }
 
-    let mut increased = 0;
-    let mut decreased = 0;
-    let mut unchanged = 0;
+    let mut increased: usize = 0;
+    let mut decreased: usize = 0;
+    let mut unchanged: usize = 0;
     let mut overall_gas_change = 0i128;
     let mut overall_gas_used = 0i128;
 
@@ -382,17 +386,17 @@ fn diff(
 
     for diff in &diffs {
         let gas_change = diff.gas_change();
-        overall_gas_change += gas_change;
-        overall_gas_used += diff.target_gas_used.gas() as i128;
+        overall_gas_change = overall_gas_change.saturating_add(gas_change);
+        overall_gas_used = overall_gas_used.saturating_add(i128::from(diff.target_gas_used.gas()));
         let gas_diff = diff.gas_diff();
 
         // Classify changes
         if gas_change > 0 {
-            increased += 1;
+            increased = increased.saturating_add(1);
         } else if gas_change < 0 {
-            decreased += 1;
+            decreased = decreased.saturating_add(1);
         } else {
-            unchanged += 1;
+            unchanged = unchanged.saturating_add(1);
         }
 
         // Display with icon and before/after values
@@ -426,6 +430,8 @@ fn diff(
     // Summary separator
     sh_println!("\n{}", "-".repeat(80))?;
 
+    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+    // i128 → f64 is intentionally lossy; acceptable for percentage display.
     let overall_gas_diff = if overall_gas_used > 0 {
         overall_gas_change as f64 / overall_gas_used as f64
     } else {
@@ -476,8 +482,12 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
+        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+        // u64 → f64 is intentionally lossy (acceptable for tolerance comparison);
+        // hi is always > 0 here since it equals max(source_gas, target_gas) and we only
+        // reach this branch when tolerance is Some, implying gas values are being compared.
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
-        diff < tolerance as f64
+        diff < f64::from(tolerance)
     } else {
         source_gas == target_gas
     }

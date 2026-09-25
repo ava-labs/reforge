@@ -44,7 +44,8 @@ pub fn correct_fmt_msg(
         return Ok(());
     }
     let source = Path::new(&loc.file);
-    let expanded_start = loc.start as usize;
+    let expanded_start =
+        usize::try_from(loc.start).expect("loc.start is non-negative, checked above");
 
     let error_source =
         macros.with_offset_adjustments(|adjustments| -> eyre::Result<ErrorSource> {
