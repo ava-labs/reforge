@@ -47,6 +47,10 @@ yansi = "1.0"
 [dev-dependencies]
 tempfile = "3"
 
+[lints.clippy]
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
+
 [patch.crates-io]
 ## solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }

@@ -53,8 +53,8 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset =
-            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
+        let close_brace_offset = OriginalOffset::end_of_contract(&source.file, library)
+            .map_err(|e| SolcError::msg(e.to_string()))?;
         let func = format!(
             "\n    function print{name}() public pure returns (string memory) {{ return \"{name}\"; }}\n"
         );
@@ -65,7 +65,7 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
     for (path, inserts) in insertions {
         for (offset, text) in inserts {
             if let Some(e) = data.entry(&path, &text) {
-                e.insert(offset);
+                e.insert(offset).map_err(|e| SolcError::msg(e.to_string()))?;
             }
         }
     }
@@ -126,8 +126,8 @@ fn get_id_or_revert(
         };
 
         // Insert just before the closing `}` of the library body.
-        let close_brace_offset =
-            OriginalOffset::new((library.span.hi().0 - source.file.start_pos.0) as usize - 1);
+        let close_brace_offset = OriginalOffset::end_of_contract(&source.file, library)
+            .map_err(|e| SolcError::msg(e.to_string()))?;
         let func = if has_id_field {
             format!(
                 "\n    function getId{name}({name} memory obj) public pure returns (uint32) {{ return obj.ID; }}\n",
@@ -145,7 +145,7 @@ fn get_id_or_revert(
     for (path, inserts) in insertions {
         for (offset, text) in &inserts {
             if let Some(e) = data.entry(&path, text) {
-                e.insert(*offset);
+                e.insert(*offset).map_err(|e| SolcError::msg(e.to_string()))?;
             }
         }
     }
@@ -171,10 +171,13 @@ fn make_libraries_contracts(
         };
 
         if comment_block.contains("#[derive(promote)]") {
-            let lib_offset =
-                OriginalOffset::new((lib.span.lo().0 - source.file.start_pos.0) as usize);
+            let lib_offset = OriginalOffset::contract_offset(&source.file, lib)
+                .map_err(|e| SolcError::msg(e.to_string()))?;
+            let end = lib_offset
+                .checked_add("library".len())
+                .ok_or_else(|| SolcError::msg("offset overflow computing library keyword end"))?;
             if let Some(e) = data.entry(path, "contract") {
-                e.replace(lib_offset..lib_offset + "library".len());
+                e.replace(lib_offset..end).map_err(|e| SolcError::msg(e.to_string()))?;
             }
         }
     }
@@ -200,9 +203,11 @@ fn make_func_public(
 
         // Use convenience methods to compute offset adjustments automatically.
         if comment_block.contains("#[derive(public)]") {
-            let original_offset =
-                OriginalOffset::new((func.span.lo().0 - source.file.start_pos.0) as usize);
-            let func_offset = data.adjusted_offset(path, original_offset);
+            let original_offset = OriginalOffset::func_offset(&source.file, func)
+                .map_err(|e| SolcError::msg(e.to_string()))?;
+            let func_offset = data
+                .adjusted_offset(path, original_offset)
+                .map_err(|e| SolcError::msg(e.to_string()))?;
             let Some(src) = data.input.get(path) else {
                 continue;
             };
@@ -215,11 +220,15 @@ fn make_func_public(
                 .ok_or_else(|| SolcError::msg(
                     format!("could not find visibility modifier '{visibility_keyword}' in function at offset {}", func_offset.get())
                 ))?;
-            let original_modifier_start = original_offset + modifier_local_offset;
+            let original_modifier_start = original_offset
+                .checked_add(modifier_local_offset)
+                .ok_or_else(|| SolcError::msg("offset overflow computing modifier start"))?;
+            let modifier_end = original_modifier_start
+                .checked_add(visibility_keyword.len())
+                .ok_or_else(|| SolcError::msg("offset overflow computing modifier end"))?;
             if let Some(e) = data.entry(path, "public") {
-                e.replace(
-                    original_modifier_start..original_modifier_start + visibility_keyword.len(),
-                );
+                e.replace(original_modifier_start..modifier_end)
+                    .map_err(|e| SolcError::msg(e.to_string()))?;
             }
         }
     }
