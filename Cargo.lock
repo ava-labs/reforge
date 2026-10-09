@@ -2181,9 +2181,9 @@ dependencies = [
 
 [[package]]
 name = "comfy-table"
-version = "8.0.0"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "136c8c4c3823846e8ba6d4bda011b4e5d5827b8bb0ac26c31f9ab31abe9f54f2"
+checksum = "b96a46ad395a5e00676eddaca4a45ed78b29c08be5a878d35e4b071c625637dd"
 dependencies = [
  "crossterm",
  "unicode-segmentation",
@@ -3254,7 +3254,7 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.14.0",
- "opener",
+ "opener 0.8.5",
  "parking_lot",
  "path-slash",
  "proptest",
@@ -6146,6 +6146,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "opener"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c826edd923022c3907477383fc77708fa68807170754fe7be1fd3496c57a1f1c"
+dependencies = [
+ "normpath",
+ "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7093,7 +7104,7 @@ dependencies = [
  "alloy-primitives",
  "chrono",
  "clap",
- "comfy-table 8.0.0",
+ "comfy-table 8.0.1",
  "eyre",
  "forge",
  "forge-fmt",
@@ -7108,7 +7119,7 @@ dependencies = [
  "inferno",
  "itertools 0.15.0",
  "libc",
- "opener",
+ "opener 0.9.0",
  "quick-junit 0.8.0",
  "rayon",
  "regex",
