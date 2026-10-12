@@ -799,7 +799,8 @@ async fn run_tests_inner(
                         continue;
                     }
                     let mut previous_snapshots: BTreeMap<String, String> =
-                        fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                        fs::read_json_file(&path)
+                            .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
                     let mut new_diff: BTreeMap<_, _> = snapshots
                         .iter()
                         .filter_map(|(k, v)| {
@@ -827,11 +828,9 @@ async fn run_tests_inner(
             if args.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
                 fs::create_dir_all(&config.snapshots)?;
                 for (group, snapshots) in &gas_snapshots {
-                    fs::write_pretty_json_file(
-                        &config.snapshots.join(format!("{group}.json")),
-                        snapshots,
-                    )
-                    .expect("Failed to write gas snapshots to disk");
+                    let path = config.snapshots.join(format!("{group}.json"));
+                    fs::write_pretty_json_file(&path, snapshots)
+                        .wrap_err_with(|| format!("failed to write {}", path.display()))?;
                 }
             }
         }
