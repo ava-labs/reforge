@@ -667,6 +667,7 @@ async fn run_tests_inner(
     });
 
     let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+    let mut differences_found = BTreeMap::<String, (String, String)>::new();
     let mut outcome = TestOutcome::empty(None, args.allow_failure);
     let mut any_test_failed = false;
     let mut backtrace_builder = None;
@@ -792,58 +793,46 @@ async fn run_tests_inner(
         // Write gas snapshots to disk if any were collected.
         if !gas_snapshots.is_empty() {
             if args.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
-                let differences_found = gas_snapshots.clone().into_iter().fold(
-                    false,
-                    |mut found, (group, snapshots)| {
-                        if !&config.snapshots.join(format!("{group}.json")).exists() {
-                            return false;
-                        }
-                        let previous_snapshots: BTreeMap<String, String> =
-                            fs::read_json_file(&config.snapshots.join(format!("{group}.json")))
-                                .expect("Failed to read snapshots from disk");
-                        let diff: BTreeMap<_, _> = snapshots
-                            .iter()
-                            .filter_map(|(k, v)| {
-                                previous_snapshots.get(k).and_then(|prev| {
-                                    if prev != v {
-                                        Some((k.clone(), (prev.clone(), v.clone())))
-                                    } else {
-                                        None
-                                    }
-                                })
+                for (group, snapshots) in &gas_snapshots {
+                    let path = config.snapshots.join(format!("{group}.json"));
+                    if !path.exists() {
+                        continue;
+                    }
+                    let mut previous_snapshots: BTreeMap<String, String> =
+                        fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                    let mut new_diff: BTreeMap<_, _> = snapshots
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            previous_snapshots.remove(k).and_then(|prev| {
+                                if &prev != v { Some((k.clone(), (prev, v.clone()))) } else { None }
                             })
-                            .collect();
-                        if !diff.is_empty() {
+                        })
+                        .collect();
+                    if !new_diff.is_empty() {
+                        let _ = foundry_common::sh_eprintln!(
+                            "{}",
+                            format!("\n[{group}] Failed to match snapshots:").red().bold()
+                        );
+                        for (key, (prev, snap)) in &new_diff {
                             let _ = foundry_common::sh_eprintln!(
                                 "{}",
-                                format!("\n[{group}] Failed to match snapshots:").red().bold()
+                                format!("- [{key}] {prev} → {snap}").red()
                             );
-                            for (key, (prev, snap)) in &diff {
-                                let _ = foundry_common::sh_eprintln!(
-                                    "{}",
-                                    format!("- [{key}] {prev} → {snap}").red()
-                                );
-                            }
-                            found = true;
                         }
-                        found
-                    },
-                );
-                if differences_found {
-                    foundry_common::sh_eprintln!()?;
-                    eyre::bail!("Snapshots differ from previous run");
+                        differences_found.append(&mut new_diff);
+                    }
                 }
             }
 
             if args.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
                 fs::create_dir_all(&config.snapshots)?;
-                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                for (group, snapshots) in &gas_snapshots {
                     fs::write_pretty_json_file(
                         &config.snapshots.join(format!("{group}.json")),
-                        &snapshots,
+                        snapshots,
                     )
                     .expect("Failed to write gas snapshots to disk");
-                });
+                }
             }
         }
 
@@ -853,9 +842,14 @@ async fn run_tests_inner(
 
         outcome.results.insert(contract_name, suite_result);
 
-        if args.fail_fast && any_test_failed {
+        if args.fail_fast && (any_test_failed || !differences_found.is_empty()) {
             break;
         }
+    }
+
+    if !differences_found.is_empty() {
+        foundry_common::sh_eprintln!()?;
+        bail!("Snapshots differ from previous run");
     }
 
     outcome.last_run_decoder = Some(decoder);
