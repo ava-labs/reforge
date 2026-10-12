@@ -47,21 +47,20 @@ pub fn correct_fmt_msg(
     let expanded_start =
         usize::try_from(loc.start).expect("loc.start is non-negative, checked above");
 
-    let error_source =
-        macros.with_offset_adjustments(|adjustments| -> eyre::Result<ErrorSource> {
-            if let Some(adj) = adjustments
-                .find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))?
-            {
-                Ok(ErrorSource::Macro {
-                    name: adj.macro_name.clone(),
-                    loc: adj.original_location.clone(),
-                })
-            } else {
-                let original_start =
-                    adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start))?;
-                Ok(ErrorSource::RawSource { loc: original_start.get() })
-            }
-        })?;
+    let error_source = macros.with_offset_adjustments(|mut iter| -> eyre::Result<ErrorSource> {
+        let Some(adjustments) = iter.find(|a| a.has_source(source)) else {
+            return Ok(ErrorSource::RawSource { loc: expanded_start });
+        };
+        if let Some(adj) =
+            adjustments.find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))?
+        {
+            Ok(ErrorSource::Macro { name: adj.macro_name.clone(), loc: adj.original_location.clone() })
+        } else {
+            let original_start =
+                adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start))?;
+            Ok(ErrorSource::RawSource { loc: original_start.get() })
+        }
+    })?;
 
     match error_source {
         ErrorSource::Macro { name, loc } => {

@@ -72,22 +72,23 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
     let mut output = compiler.compile(&project, macros)?;
 
     // When compilation is skipped (all outputs cached) the preprocessor is never called, so
-    // `preprocessed` is None.  Run a lightweight expansion pass so the linter always
+    // `preprocessed` is empty.  Run a lightweight expansion pass so the linter always
     // analyses macro-expanded source rather than the original pre-expansion text.
-    let preprocessed_sources = match preprocessed.lock().unwrap().take() {
-        Some(preprocessed) => Some(preprocessed.sources),
-        None if !rules.is_empty() => {
-            let paths = project.paths.clone().with_language::<SolcLanguage>();
-            let sources = project.paths.read_input_files()?;
-            crate::testing::expand_macros_with_sources(
-                sources,
-                project.root(),
-                Some(&paths),
-                &rules,
-            )
-            .ok()
-        }
-        None => None,
+    let outputs = std::mem::take(&mut *preprocessed.lock().unwrap());
+    let preprocessed_sources = if !outputs.is_empty() {
+        Some(outputs.into_values().flat_map(|p| p.sources).collect())
+    } else if !rules.is_empty() {
+        let paths = project.paths.clone().with_language::<SolcLanguage>();
+        let sources = project.paths.read_input_files()?;
+        crate::testing::expand_macros_with_sources(
+            sources,
+            project.root(),
+            Some(&paths),
+            &rules,
+        )
+        .ok()
+    } else {
+        None
     };
 
     // Cache project selectors.

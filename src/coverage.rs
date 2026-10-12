@@ -130,7 +130,12 @@ impl CoverageArgs {
             let (project, output) = self.build(&config, macros)?;
             (project.paths, output)
         };
-        let preprocessed_sources = preprocessed.lock().unwrap().take().map(|p| p.sources);
+        let outputs = std::mem::take(&mut *preprocessed.lock().unwrap());
+        let preprocessed_sources = if outputs.is_empty() {
+            None
+        } else {
+            Some(outputs.into_values().flat_map(|p| p.sources).collect())
+        };
 
         let reporters: Vec<Box<dyn CoverageReporter>> = self
             .report

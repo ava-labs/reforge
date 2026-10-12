@@ -429,13 +429,11 @@ impl OffsetAdjustment {
         Ok(acc)
     }
 
-    /// Merges all entries from `other` into `self`, appending each path's adjustments
-    /// in their original insertion order.
-    pub(crate) fn extend(&mut self, other: &OffsetAdjustment) {
-        for (path, adjs) in &other.0 {
-            self.0.entry(path.clone()).or_default().extend_from_slice(adjs);
-        }
+    /// Returns `true` if any adjustments have been recorded for `path`.
+    pub(crate) fn has_source(&self, path: &Path) -> bool {
+        self.0.contains_key(path)
     }
+
 }
 
 #[cfg(test)]
