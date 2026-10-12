@@ -2,8 +2,9 @@
 // See the file LICENSE for licensing terms.
 
 use std::{
+    collections::BTreeMap,
     marker::PhantomData,
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -126,7 +127,7 @@ pub struct EditInfo {
 /// Each entry is `(path, Adjustment)` where [`Adjustment`] records the original offset and line,
 /// and the signed byte and line deltas introduced by the edit.
 #[derive(Debug, Default, Clone)]
-pub struct OffsetAdjustment(Vec<(PathBuf, Adjustment)>);
+pub struct OffsetAdjustment(BTreeMap<PathBuf, Vec<Adjustment>>);
 
 /// A single recorded edit and optional macro attribution.
 #[derive(Debug, Clone)]
@@ -204,7 +205,7 @@ impl<'a> AdjustmentEntry<'a> {
         let (adjusted, info) =
             offset_adjustments.record(path, original_offset, content.as_str(), text, "")?;
         content.insert_str(adjusted.get(), text);
-        if let Some((_, adj)) = offset_adjustments.last_mut() {
+        if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
         }
@@ -237,7 +238,7 @@ impl<'a> AdjustmentEntry<'a> {
             &removed,
         )?;
         content.replace_range(adjusted_start.get()..adjusted_end.get(), text);
-        if let Some((_, adj)) = offset_adjustments.last_mut() {
+        if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
             adj.macro_name = name.map(|s| s.to_string());
             adj.original_location = original_loc;
         }
@@ -258,9 +259,12 @@ impl OffsetAdjustment {
         original_offset: OriginalOffset,
     ) -> eyre::Result<ExpandedOffset> {
         let delta = self
-            .iter()
-            .filter(|(p, a)| p == path && a.original_offset <= original_offset)
-            .try_fold(0isize, |acc, (_, a)| acc.checked_add(a.delta_offset))
+            .0
+            .get(path)
+            .into_iter()
+            .flat_map(|v| v.iter())
+            .filter(|a| a.original_offset <= original_offset)
+            .try_fold(0isize, |acc, a| acc.checked_add(a.delta_offset))
             .ok_or_else(|| eyre::eyre!("offset delta overflow"))?;
         let raw = isize::try_from(original_offset.get())
             .ok()
@@ -296,9 +300,12 @@ impl OffsetAdjustment {
             .and_then(|n| n.checked_add(1))
             .ok_or_else(|| eyre::eyre!("line count overflow"))?;
         let accumulated_line_delta = self
-            .iter()
-            .filter(|(p, a)| p.as_path() == path && a.original_offset <= original_offset)
-            .try_fold(0isize, |acc, (_, a)| acc.checked_add(a.delta_line))
+            .0
+            .get(path)
+            .into_iter()
+            .flat_map(|v| v.iter())
+            .filter(|a| a.original_offset <= original_offset)
+            .try_fold(0isize, |acc, a| acc.checked_add(a.delta_line))
             .ok_or_else(|| eyre::eyre!("accumulated line delta overflow"))?;
         let original_line = current_line
             .checked_sub(accumulated_line_delta)
@@ -314,18 +321,15 @@ impl OffsetAdjustment {
             .zip(isize::try_from(removed.bytes().filter(|&b| b == b'\n').count()).ok())
             .and_then(|(a, r)| a.checked_sub(r))
             .ok_or_else(|| eyre::eyre!("delta_line overflow"))?;
-        self.push((
-            path.to_path_buf(),
-            Adjustment {
-                original_offset,
-                original_line,
-                added_len: added.len(),
-                delta_offset,
-                delta_line,
-                macro_name: None,
-                original_location: None,
-            },
-        ));
+        self.0.entry(path.to_path_buf()).or_default().push(Adjustment {
+            original_offset,
+            original_line,
+            added_len: added.len(),
+            delta_offset,
+            delta_line,
+            macro_name: None,
+            original_location: None,
+        });
         Ok((adjusted_offset, EditInfo { expanded_line: current_line, delta_lines: delta_line }))
     }
 
@@ -405,7 +409,7 @@ impl OffsetAdjustment {
         f: impl Fn(ExpandedOffset, &'a Adjustment, &mut V) -> eyre::Result<ControlFlow<()>>,
     ) -> eyre::Result<V> {
         let mut accumulated_delta = 0isize;
-        for (_, adj) in self.iter().filter(|(p, _)| p == source) {
+        for adj in self.0.get(source).into_iter().flat_map(|v| v.iter()) {
             let expanded_pos = isize::try_from(adj.original_offset.get())
                 .ok()
                 .and_then(|v| v.checked_add(accumulated_delta))
@@ -424,19 +428,13 @@ impl OffsetAdjustment {
         }
         Ok(acc)
     }
-}
 
-impl Deref for OffsetAdjustment {
-    type Target = Vec<(PathBuf, Adjustment)>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for OffsetAdjustment {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    /// Merges all entries from `other` into `self`, appending each path's adjustments
+    /// in their original insertion order.
+    pub(crate) fn extend(&mut self, other: &OffsetAdjustment) {
+        for (path, adjs) in &other.0 {
+            self.0.entry(path.clone()).or_default().extend_from_slice(adjs);
+        }
     }
 }
 
@@ -475,19 +473,16 @@ mod tests {
     #[test]
     fn test_record() {
         let adj = setup();
-        assert_eq!(adj.len(), 2);
-        let (path, adjustment) = &adj[0];
-        assert_eq!(path, Path::new("foo.sol"));
-        assert_eq!(adjustment.original_offset.get(), 16);
-        assert_eq!(adjustment.original_line, 2);
-        assert_eq!(adjustment.delta_offset, 28);
-        assert_eq!(adjustment.delta_line, 3);
-        let (path2, adj2) = &adj[1];
-        assert_eq!(path2, Path::new("foo.sol"));
-        assert_eq!(adj2.original_offset.get(), 16);
-        assert_eq!(adj2.original_line, 2);
-        assert_eq!(adj2.delta_offset, 33);
-        assert_eq!(adj2.delta_line, 3);
+        let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
+        assert_eq!(adjs.len(), 2);
+        assert_eq!(adjs[0].original_offset.get(), 16);
+        assert_eq!(adjs[0].original_line, 2);
+        assert_eq!(adjs[0].delta_offset, 28);
+        assert_eq!(adjs[0].delta_line, 3);
+        assert_eq!(adjs[1].original_offset.get(), 16);
+        assert_eq!(adjs[1].original_line, 2);
+        assert_eq!(adjs[1].delta_offset, 33);
+        assert_eq!(adjs[1].delta_line, 3);
     }
 
     #[test]
@@ -532,13 +527,12 @@ mod tests {
             .expect("Test failed");
         assert_eq!(offset.get(), 15);
 
-        assert_eq!(adj.len(), 1);
-        let (path, adjustment) = &adj[0];
-        assert_eq!(path, Path::new("foo.sol"));
-        assert_eq!(adjustment.original_offset.get(), 15);
-        assert_eq!(adjustment.original_line, 2);
-        assert_eq!(adjustment.delta_offset, -18); // 8 - 26
-        assert_eq!(adjustment.delta_line, -1); // 1 - 2 newlines
+        let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
+        assert_eq!(adjs.len(), 1);
+        assert_eq!(adjs[0].original_offset.get(), 15);
+        assert_eq!(adjs[0].original_line, 2);
+        assert_eq!(adjs[0].delta_offset, -18); // 8 - 26
+        assert_eq!(adjs[0].delta_line, -1); // 1 - 2 newlines
 
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.
