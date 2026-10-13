@@ -51,10 +51,13 @@ pub fn correct_fmt_msg(
         let Some(adjustments) = iter.find(|a| a.has_source(source)) else {
             return Ok(ErrorSource::RawSource { loc: expanded_start });
         };
-        if let Some(adj) =
-            adjustments.find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))?
+        if let Some(adj) = adjustments
+            .find_macro_adjustment_by_offset(source, ExpandedOffset::new(expanded_start))?
         {
-            Ok(ErrorSource::Macro { name: adj.macro_name.clone(), loc: adj.original_location.clone() })
+            Ok(ErrorSource::Macro {
+                name: adj.macro_name.clone(),
+                loc: adj.original_location.clone(),
+            })
         } else {
             let original_start =
                 adjustments.get_original_offset(source, ExpandedOffset::new(expanded_start))?;

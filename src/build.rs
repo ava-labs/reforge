@@ -80,13 +80,8 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
     } else if !rules.is_empty() {
         let paths = project.paths.clone().with_language::<SolcLanguage>();
         let sources = project.paths.read_input_files()?;
-        crate::testing::expand_macros_with_sources(
-            sources,
-            project.root(),
-            Some(&paths),
-            &rules,
-        )
-        .ok()
+        crate::testing::expand_macros_with_sources(sources, project.root(), Some(&paths), &rules)
+            .ok()
     } else {
         None
     };

@@ -433,7 +433,6 @@ impl OffsetAdjustment {
     pub(crate) fn has_source(&self, path: &Path) -> bool {
         self.0.contains_key(path)
     }
-
 }
 
 #[cfg(test)]

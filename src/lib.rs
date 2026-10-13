@@ -19,8 +19,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use semver::Version;
-
 use clap::{FromArgMatches, Parser, Subcommand};
 use forge::{
     args::setup,
@@ -40,6 +38,7 @@ use foundry_compilers::{
     project::Preprocessor,
     solc::SolcCompiler,
 };
+use semver::Version;
 use solar::sema::Gcx;
 
 pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation, OriginalOffset};

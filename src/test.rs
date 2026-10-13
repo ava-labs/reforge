@@ -20,7 +20,6 @@ use std::{
 
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, bail};
-use semver::Version;
 use forge::{
     MultiContractRunner, MultiContractRunnerBuilder,
     cmd::{install, test::FilterArgs, watch::WatchArgs},
@@ -62,6 +61,7 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+use semver::Version;
 use yansi::Paint;
 
 use crate::{
