@@ -203,6 +203,14 @@ impl Debug for MacroRules {
     }
 }
 
+/// Whether this invocation will run macro expansion, decided once.
+pub enum Expansion {
+    /// `--disable-macros` was passed, or no rules were registered.
+    Disabled,
+    /// Macro expansion is active.
+    Enabled(MacroRules),
+}
+
 impl MacroRules {
     /// Runs `f` with the offset adjustments from the most recent preprocessing pass.
     ///
@@ -217,6 +225,20 @@ impl MacroRules {
         }
     }
 
+    /// Resolves `--disable-macros` and the empty-rule-set case into a single decision,
+    /// reporting the skip to the user exactly once.
+    pub fn resolve(self, disabled: bool) -> eyre::Result<Expansion> {
+        if disabled {
+            return Ok(Expansion::Disabled);
+        }
+        if self.rules.is_empty() {
+            tracing::info!("No macros rules present, skipping macro expansion.");
+            sh_println!("No macros rules present, skipping macro expansion.")?;
+            return Ok(Expansion::Disabled);
+        }
+        Ok(Expansion::Enabled(self))
+    }
+
     /// Runs the CLI. This should be used by downstream users as the main entry point of their
     /// program.
     pub fn run(self) -> eyre::Result<()> {
@@ -229,16 +251,9 @@ impl MacroRules {
                     eyre::bail!("--display is only supported with the `build` subcommand");
                 }
                 test_args.global.init()?;
-                let macros = if !args.disable_macros {
-                    if self.rules.is_empty() {
-                        tracing::info!("No macros rules present, skipping macro expansion.");
-                        sh_println!("No macros rules present, skipping macro expansion.")?;
-                        MacroRules::default()
-                    } else {
-                        self
-                    }
-                } else {
-                    MacroRules::default()
+                let macros = match self.resolve(args.disable_macros)? {
+                    Expansion::Enabled(macros) => macros,
+                    Expansion::Disabled => MacroRules::default(),
                 };
                 let runtime = test_args.global.tokio_runtime();
                 runtime.block_on(test::test(test_args, macros))
@@ -254,39 +269,34 @@ impl MacroRules {
                     return display::display_sources(&root, &glob, &sources);
                 }
 
-                if !args.disable_macros {
-                    if self.rules.is_empty() {
-                        tracing::info!("No macros rules present, skipping macro expansion.");
-                        sh_println!("No macros rules present, skipping macro expansion.")?;
-                    } else {
-                        let Forge { global, cmd } = forge;
-                        return match cmd {
-                            ForgeSubcommand::Build(build_args) => {
-                                if build_args.build.dynamic_test_linking {
-                                    tracing::warn!(
-                                        "Dynamic linking is not supported with macros expansion, skipping."
-                                    );
-                                    sh_println!(
-                                        "Dynamic linking is not supported with macros expansion, skipping."
-                                    )?;
-                                }
-                                global.block_on(build::build(build_args, self))
+                if let Expansion::Enabled(macros) = self.resolve(args.disable_macros)? {
+                    let Forge { global, cmd } = forge;
+                    return match cmd {
+                        ForgeSubcommand::Build(build_args) => {
+                            if build_args.build.dynamic_test_linking {
+                                tracing::warn!(
+                                    "Dynamic linking is not supported with macros expansion, skipping."
+                                );
+                                sh_println!(
+                                    "Dynamic linking is not supported with macros expansion, skipping."
+                                )?;
                             }
-                            // Foundry's `GasSnapshotArgs` hides its fields, so we re-parse the
-                            // process arguments into reforge's own mirror of the struct.
-                            ForgeSubcommand::Snapshot(_) => {
-                                let snapshot_args = snapshot::parse_from_env();
-                                global.block_on(snapshot_args.run(self))
-                            }
-                            // Foundry's `CoverageArgs` hides its fields, so we re-parse the
-                            // process arguments into reforge's own mirror of the struct.
-                            ForgeSubcommand::Coverage(_) => {
-                                let coverage_args = coverage::parse_from_env();
-                                global.block_on(coverage_args.run(self))
-                            }
-                            cmd => forge::args::run_command(Forge { global, cmd }),
-                        };
-                    }
+                            global.block_on(build::build(build_args, macros))
+                        }
+                        // Foundry's `GasSnapshotArgs` hides its fields, so we re-parse the
+                        // process arguments into reforge's own mirror of the struct.
+                        ForgeSubcommand::Snapshot(_) => {
+                            let snapshot_args = snapshot::parse_from_env();
+                            global.block_on(snapshot_args.run(macros))
+                        }
+                        // Foundry's `CoverageArgs` hides its fields, so we re-parse the
+                        // process arguments into reforge's own mirror of the struct.
+                        ForgeSubcommand::Coverage(_) => {
+                            let coverage_args = coverage::parse_from_env();
+                            global.block_on(coverage_args.run(macros))
+                        }
+                        cmd => forge::args::run_command(Forge { global, cmd }),
+                    };
                 }
 
                 forge::args::run_command(forge)
