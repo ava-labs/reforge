@@ -471,11 +471,10 @@ fn fmt_change(change: i128) -> String {
 /// If `tolerance` is `None`, then this returns `true` if both gas values are equal
 fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>) -> bool {
     if let Some(tolerance) = tolerance_pct {
-        let (hi, lo) = if source_gas > target_gas {
-            (source_gas, target_gas)
-        } else {
-            (target_gas, source_gas)
-        };
+        let (hi, lo) = (source_gas.max(target_gas), source_gas.min(target_gas));
+        if hi == 0 {
+            return true;
+        }
         #[expect(
             clippy::cast_precision_loss,
             clippy::as_conversions,
