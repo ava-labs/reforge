@@ -31,7 +31,7 @@ glob = "0.3"
 inferno = { version = "0.12", default-features = false }
 itertools = "0.15"
 libc = "0.2"
-opener = "0.8"
+opener = "0.9"
 quick-junit = "0.8"
 rayon = "1.12"
 regex = "1.12.3"
