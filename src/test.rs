@@ -480,8 +480,11 @@ pub async fn run_tests(
         let (suite_name, test_name, mut test_result) =
             outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
-        let (_, arena) =
-            test_result.traces.iter_mut().find(|(kind, _)| *kind == TraceKind::Execution).unwrap();
+        let (_, arena) = test_result
+            .traces
+            .iter_mut()
+            .find(|(kind, _)| *kind == TraceKind::Execution)
+            .ok_or_eyre("no tests were executed")?;
 
         let decoder = outcome.last_run_decoder.as_ref().unwrap();
         decode_trace_arena(arena, decoder).await;
