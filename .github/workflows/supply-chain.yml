@@ -1,0 +1,59 @@
+# Copyright (C) 2026, Ava Labs, Inc.
+# See the file LICENSE for licensing terms.
+
+name: Supply Chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'Cargo.lock'
+  schedule:
+    - cron: '0 8 * * *'  # 08:00 UTC daily
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate .gitmodules URLs and initialise submodules
+        run: bash .github/scripts/validate-submodules.sh
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Run cargo deny (RustSec)
+        run: make deny
+
+      - name: Install osv-scanner
+        run: |
+          curl -fsSL https://github.com/google/osv-scanner/releases/download/v2.3.2/osv-scanner_linux_amd64 \
+            -o /usr/local/bin/osv-scanner
+          echo "03d800073a330d053047b26ff4484136d866aee4f486e12fb82aa452bd4002ca  /usr/local/bin/osv-scanner" \
+            | sha256sum -c
+          chmod +x /usr/local/bin/osv-scanner
+
+      - name: Run osv-scanner (OSV.dev)
+        run: make osv
+
+      - name: Notify Slack on failure
+        if: failure() && github.event_name == 'schedule'
+        run: |
+          curl -fsSL -X POST "${SLACK_WEBHOOK_URL}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"text\":\":warning: *reforge* daily dependency audit failed — <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|view run>\"}"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_SUPPLY_CHAIN_WEBHOOK }}
