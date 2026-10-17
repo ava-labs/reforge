@@ -13,7 +13,7 @@ mod test;
 pub mod testing;
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fmt::{Debug, Formatter},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -38,6 +38,7 @@ use foundry_compilers::{
     project::Preprocessor,
     solc::SolcCompiler,
 };
+use semver::Version;
 use solar::sema::Gcx;
 
 pub use crate::span_utils::{AdjustmentEntry, EditInfo, MacroOriginalLocation, OriginalOffset};
@@ -194,7 +195,7 @@ pub(crate) struct PreprocessedOutput {
 #[derive(Default, Clone)]
 pub struct MacroRules {
     pub rules: Vec<Macro>,
-    pub(crate) preprocessed: Arc<Mutex<Option<PreprocessedOutput>>>,
+    pub(crate) preprocessed: Arc<Mutex<BTreeMap<Version, PreprocessedOutput>>>,
 }
 
 impl Debug for MacroRules {
@@ -204,17 +205,21 @@ impl Debug for MacroRules {
 }
 
 impl MacroRules {
-    /// Runs `f` with the offset adjustments from the most recent preprocessing pass.
-    ///
-    /// If preprocessing hasn't produced output yet, or it has already been taken (see
-    /// [`PreprocessedOutput`]), `f` runs against an empty [`OffsetAdjustment`], which is a safe
-    /// default: every lookup on it simply finds no adjustment.
-    pub(crate) fn with_offset_adjustments<R>(&self, f: impl FnOnce(&OffsetAdjustment) -> R) -> R {
+    /// Calls `f` with an iterator over the offset adjustments from each preprocessing pass,
+    /// one entry per solc-version run. The caller should use [`OffsetAdjustment::has_source`]
+    /// to locate the entry covering the source file it is interested in.
+    pub(crate) fn with_offset_adjustments<R, F>(&self, f: F) -> R
+    where
+        for<'a> F: FnOnce(
+            std::iter::Map<
+                std::collections::btree_map::Values<'a, Version, PreprocessedOutput>,
+                fn(&'a PreprocessedOutput) -> &'a OffsetAdjustment,
+            >,
+        ) -> R,
+    {
         let guard = self.preprocessed.lock().unwrap();
-        match &*guard {
-            Some(preprocessed) => f(&preprocessed.offset_adjustments),
-            None => f(&OffsetAdjustment::default()),
-        }
+        let get_adj: fn(&PreprocessedOutput) -> &OffsetAdjustment = |p| &p.offset_adjustments;
+        f(guard.values().map(get_adj))
     }
 
     /// Runs the CLI. This should be used by downstream users as the main entry point of their
@@ -375,10 +380,13 @@ impl Preprocessor<SolcCompiler> for MacroRules {
             for rule in &self.rules {
                 rule(&gcx, &mut prepocessing_data)?;
             }
-            *self.preprocessed.lock().unwrap() = Some(PreprocessedOutput {
-                sources: prepocessing_data.input.clone(),
-                offset_adjustments: std::mem::take(&mut prepocessing_data.offset_adjustments),
-            });
+            self.preprocessed.lock().unwrap().insert(
+                input.version.clone(),
+                PreprocessedOutput {
+                    sources: prepocessing_data.input.clone(),
+                    offset_adjustments: std::mem::take(&mut prepocessing_data.offset_adjustments),
+                },
+            );
             Ok(())
         })?;
 

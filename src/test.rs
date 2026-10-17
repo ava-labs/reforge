@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::Instant,
 };
 
@@ -61,6 +61,7 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+use semver::Version;
 use yansi::Paint;
 
 use crate::{
@@ -407,7 +408,7 @@ pub async fn run_tests(
     mut config: Config,
     mut evm_opts: EvmOpts,
     output: &ProjectCompileOutput,
-    preprocessed: Arc<std::sync::Mutex<Option<crate::PreprocessedOutput>>>,
+    preprocessed: Arc<Mutex<BTreeMap<Version, crate::PreprocessedOutput>>>,
     coverage: bool,
 ) -> eyre::Result<TestOutcome> {
     let filter = args.filter(&config)?;
@@ -457,9 +458,11 @@ pub async fn run_tests(
 
     // If macro expansion produced expanded sources, replace the runner's Solar analysis
     // (which was built on stale on-disk sources) with a fresh silent one.
-    let expanded = preprocessed.lock().unwrap().clone();
-    if let Some(ref preprocessed) = expanded {
-        let sources = &preprocessed.sources;
+    let outputs = preprocessed.lock().unwrap().clone();
+    if !outputs.is_empty() {
+        let sources: foundry_compilers::artifacts::Sources =
+            outputs.into_values().flat_map(|p| p.sources).collect();
+        let sources = &sources;
         let analysis = create_silent_solar_analysis(sources)?;
         let analysis = Arc::new(analysis);
         let fuzz_literals = forge::fuzz::strategies::LiteralsDictionary::new(
