@@ -32,7 +32,7 @@ jobs:
         run: bash .github/scripts/validate-submodules.sh
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: "1.91.0"
 
@@ -77,7 +77,7 @@ jobs:
         run: bash .github/scripts/validate-submodules.sh
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: "1.91.0"
           components: clippy
@@ -130,7 +130,7 @@ jobs:
           echo "${delimiter}"         >> "$GITHUB_OUTPUT"
 
       - name: Install Rust (nightly)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.nightly.outputs.version }}
           components: rustfmt
