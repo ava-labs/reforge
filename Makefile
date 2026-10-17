@@ -49,7 +49,7 @@ build:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test:
-	cargo test
+	cargo test -- --test-threads=1
 	cargo run --example macros -- test --root sample_proj
 
 coverage:

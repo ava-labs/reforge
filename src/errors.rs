@@ -167,6 +167,10 @@ fn format_macro_fmt_msg(
     }
 }
 
+// NOTE: these tests must run single-threaded (`cargo test -- --test-threads=1`, enforced via
+// `make test`). Each test invokes solc through SVM, which downloads the binary on first use.
+// On Linux, executing a file while another thread is still writing it produces ETXTBSY (os error
+// 26), so concurrent test threads will flake unless serialised at the process level.
 #[cfg(test)]
 mod tests {
     use solar::sema::{Gcx, hir::ContractKind};
