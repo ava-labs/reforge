@@ -19,6 +19,17 @@ ignore = [
     # foundry submodule — we don't control the dependency. Extraction logic is
     # unchanged; no security vulnerability, only a maintenance advisory.
     { id = "RUSTSEC-2025-0172", reason = "unmaintained; locked by soldeer-core in foundry submodule; no security vulnerability, maintenance-only advisory" },
+
+    # Three zip advisories (SUID/SGID, symlink path traversal, perms through
+    # symlinks) all require zip >= 9.0.0. soldeer-core 0.10.0 (foundry
+    # submodule, unmodifiable) pins zip 4.6.1; soldeer-core 0.12.0 (our dep)
+    # pulls zip 8.6.0 — neither allows 9.x yet.  All three vectors require
+    # extraction of an attacker-controlled archive; soldeer only extracts
+    # archives from its own registry after checksum verification, so the
+    # attack surface doesn't exist in practice.
+    { id = "RUSTSEC-2026-0367", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
 ]
 
 [licenses]
