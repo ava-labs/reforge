@@ -44,3 +44,15 @@ reason = "lru: fix requires semver-breaking 0.18.x upgrade; locked by alloy-prov
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0172"
 reason = "zip-extract: unmaintained; locked by soldeer-core in foundry submodule; no security vulnerability, maintenance-only advisory"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0367"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0368"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0369"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
