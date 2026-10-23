@@ -26,6 +26,128 @@ pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
         .map_err(|e| eyre::eyre!("{e}"))
 }
 
+/// Builder for testing macro expansion against expected output.
+///
+/// Use the setter methods to specify the [`source`](MacroTest::source),
+/// [`expected`](MacroTest::expected), and [`mismatches`](MacroTest::mismatches)
+/// directories, then call [`run`](MacroTest::run).
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # fn main() -> eyre::Result<()> {
+/// # let rule: reforge::Macro = |_, _| Ok(());
+/// reforge::testing::MacroTest::new()
+///     .source("tests/source")
+///     .expected("tests/expected")
+///     .mismatches("tests/mismatches")
+///     .run(&[rule])?;
+/// # Ok(())
+/// # }
+/// ```
+#[must_use]
+pub struct MacroTest {
+    source: Option<PathBuf>,
+    expected: Option<PathBuf>,
+    mismatches: Option<PathBuf>,
+}
+
+impl MacroTest {
+    /// Creates a new [`MacroTest`] with no directories set.
+    pub fn new() -> Self {
+        Self { source: None, expected: None, mismatches: None }
+    }
+
+    /// Sets the directory of input `.sol` files to run macros against (read-only).
+    pub fn source(mut self, path: impl AsRef<Path>) -> Self {
+        self.source = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the directory of pre-expanded `.sol` files to compare against.
+    pub fn expected(mut self, path: impl AsRef<Path>) -> Self {
+        self.expected = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the directory where actual expanded output is written on mismatch,
+    /// so you can inspect it and copy it to [`expected`](MacroTest::expected) if correct.
+    pub fn mismatches(mut self, path: impl AsRef<Path>) -> Self {
+        self.mismatches = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Runs `macro_rules` over the source files and compares the expanded output
+    /// against the expected files, file-by-file (matched by relative path).
+    ///
+    /// On mismatch the actual content is written to the mismatches directory and
+    /// the call returns an error listing the differing files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sources cannot be read, if macro expansion fails, if
+    /// the mismatch output cannot be written, or if any expanded file differs from
+    /// its counterpart in `expected`.
+    pub fn run(self, macro_rules: &[Macro]) -> eyre::Result<()> {
+        let source = self
+            .source
+            .ok_or_else(|| eyre::eyre!("MacroTest: source directory not set — call .source()"))?;
+        let expected = self.expected.ok_or_else(|| {
+            eyre::eyre!("MacroTest: expected directory not set — call .expected()")
+        })?;
+        let snapshot = self.mismatches.ok_or_else(|| {
+            eyre::eyre!("MacroTest: mismatches directory not set — call .mismatches()")
+        })?;
+
+        let sources = expand_macros(&source, None, macro_rules)?;
+        let expected_sources = load_sol_sources(&expected)?;
+
+        let mut failures: Vec<(PathBuf, String)> = Vec::new();
+        for (actual_path, actual_src) in &sources {
+            let relative_path = actual_path.strip_prefix(&source).map_err(|_| {
+                eyre::eyre!(
+                    "expanded source path '{}' is not under source root '{}'",
+                    actual_path.display(),
+                    source.display()
+                )
+            })?;
+            let expected_path = expected.join(relative_path);
+            let actual_formatted = format_sol(actual_src.content.as_str());
+            let matches = expected_sources
+                .get(&expected_path)
+                .is_some_and(|exp| actual_formatted == format_sol(exp.content.as_str()));
+            if !matches {
+                failures.push((relative_path.to_path_buf(), actual_formatted));
+            }
+        }
+
+        if !failures.is_empty() {
+            for (relative_path, content) in &failures {
+                let snapshot_path = snapshot.join(relative_path);
+                if let Some(parent) = snapshot_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&snapshot_path, content)?;
+            }
+            let paths: Vec<_> = failures.iter().map(|(p, _)| p.display().to_string()).collect();
+            eyre::bail!(
+                "macro expansion mismatch in: {}\nActual output written to '{}' — copy to '{}' if correct.",
+                paths.join(", "),
+                snapshot.display(),
+                expected.display(),
+            );
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for MacroTest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Runs `macro_rules` over the Solidity sources in `source`, then compares the
 /// expanded output file-by-file against the pre-expanded sources in `expected`
 /// (matched by path relative to their respective roots).
@@ -36,63 +158,31 @@ pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
 ///
 /// # Errors
 ///
-/// Returns an error if the sources cannot be read, if macro expansion fails, if
-/// the mismatch output cannot be written, or if any expanded file differs from
-/// its counterpart in `expected`.
+/// Delegates to [`MacroTest::run`] — see its `# Errors` section.
 ///
-/// # Panics
+/// # Deprecated
 ///
-/// Panics if `mismatches` contains a path with no parent directory.
+/// Use [`MacroTest`] instead to avoid accidental argument transposition:
+///
+/// ```rust,no_run
+/// # fn main() -> eyre::Result<()> {
+/// # let rule: reforge::Macro = |_, _| Ok(());
+/// reforge::testing::MacroTest::new()
+///     .source("tests/source")
+///     .expected("tests/expected")
+///     .mismatches("tests/mismatches")
+///     .run(&[rule])?;
+/// # Ok(())
+/// # }
+/// ```
+#[deprecated(since = "0.1.0", note = "use `MacroTest` builder instead")]
 pub fn test_macros(
     source: impl AsRef<Path>,
     expected: impl AsRef<Path>,
     mismatches: impl AsRef<Path>,
     macro_rules: &[Macro],
 ) -> eyre::Result<()> {
-    let source = source.as_ref();
-    let expected = expected.as_ref();
-    let snapshot = mismatches.as_ref();
-
-    let sources = expand_macros(source, None, macro_rules)?;
-    let expected_sources = load_sol_sources(expected)?;
-
-    let mut failures: Vec<(PathBuf, String)> = Vec::new();
-    for (actual_path, actual_src) in &sources {
-        let relative_path = actual_path.strip_prefix(source).map_err(|_| {
-            eyre::eyre!(
-                "expanded source path '{}' is not under source root '{}'",
-                actual_path.display(),
-                source.display()
-            )
-        })?;
-        let expected_path = expected.join(relative_path);
-        let actual_formatted = format_sol(actual_src.content.as_str());
-        let matches = expected_sources
-            .get(&expected_path)
-            .is_some_and(|exp| actual_formatted == format_sol(exp.content.as_str()));
-        if !matches {
-            failures.push((relative_path.to_path_buf(), actual_formatted));
-        }
-    }
-
-    if !failures.is_empty() {
-        for (relative_path, content) in &failures {
-            let snapshot_path = snapshot.join(relative_path);
-            if let Some(parent) = snapshot_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&snapshot_path, content)?;
-        }
-        let paths: Vec<_> = failures.iter().map(|(p, _)| p.display().to_string()).collect();
-        eyre::bail!(
-            "macro expansion mismatch in: {}\nActual output written to '{}' — copy to '{}' if correct.",
-            paths.join(", "),
-            snapshot.display(),
-            expected.display(),
-        );
-    }
-
-    Ok(())
+    MacroTest::new().source(source).expected(expected).mismatches(mismatches).run(macro_rules)
 }
 
 /// Runs `macro_rule` over the Solidity sources in `source` and expects the
