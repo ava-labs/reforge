@@ -45,6 +45,7 @@ pub(crate) fn load_sol_sources(dir: &Path) -> eyre::Result<Sources> {
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 pub struct MacroTest {
     source: Option<PathBuf>,
     expected: Option<PathBuf>,
@@ -154,6 +155,10 @@ impl Default for MacroTest {
 /// On mismatch, the actual expanded content is written to `mismatches` (mirroring
 /// the same relative path structure) so testers can inspect the output and copy
 /// it to `expected` if it is correct.
+///
+/// # Errors
+///
+/// Delegates to [`MacroTest::run`] — see its `# Errors` section.
 ///
 /// # Deprecated
 ///
