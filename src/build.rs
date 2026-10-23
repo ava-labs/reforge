@@ -65,14 +65,12 @@ pub async fn build(build_args: BuildArgs, macros: crate::MacroRules) -> eyre::Re
         }
     }
     let format_json = shell::is_json();
-    let compiler = ProjectCompiler {
-        project_root: project.root().to_path_buf(),
-        print_names: build_args.names,
-        print_sizes: build_args.sizes,
-        bail: !format_json,
-        ignore_eip_3860: build_args.ignore_eip_3860,
-        files,
-    };
+    let compiler = ProjectCompiler::new(project.root().to_path_buf())
+        .print_names(build_args.names)
+        .print_sizes(build_args.sizes)
+        .bail(!format_json)
+        .ignore_eip_3860(build_args.ignore_eip_3860)
+        .files(files);
 
     let rules = macros.rules.clone();
     let preprocessed = macros.preprocessed.clone();

@@ -375,14 +375,7 @@ pub(crate) async fn compile_and_run(
 
     let files = test_args.get_sources_to_compile(&config, &filter)?.into_iter().collect::<Vec<_>>();
 
-    let compiler = ProjectCompiler {
-        project_root: project.root().to_path_buf(),
-        print_names: false,
-        print_sizes: false,
-        bail: true,
-        ignore_eip_3860: false,
-        files,
-    };
+    let compiler = ProjectCompiler::new(project.root().to_path_buf()).files(files);
 
     // Clone the Arc *before* consuming `macros` so we can access expanded sources later.
     let preprocessed_arc = Arc::clone(&macros.preprocessed);
