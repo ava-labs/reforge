@@ -20,10 +20,11 @@
 //! logic. The public `GasSnapshotEntry`/`Format` types are reused as-is.
 
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, Reverse},
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
+    process,
     str::FromStr,
 };
 
@@ -38,6 +39,8 @@ use forge::{
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use foundry_common::{sh_println, shell};
 use yansi::Paint;
+
+use crate::test::{TestArgs, compile_and_run};
 
 /// CLI arguments for `forge snapshot`.
 ///
@@ -97,7 +100,7 @@ pub struct GasSnapshotArgs {
 
     /// All test arguments are supported
     #[command(flatten)]
-    test: crate::test::TestArgs,
+    test: TestArgs,
 
     /// Additional configs for test results
     #[command(flatten)]
@@ -110,7 +113,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = crate::test::compile_and_run(&self.test, macros).await?;
+        let outcome = Box::pin(compile_and_run(&self.test, macros)).await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -121,11 +124,7 @@ impl GasSnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
-            if check(tests, snaps, self.tolerance) {
-                std::process::exit(0)
-            } else {
-                std::process::exit(1)
-            }
+            if check(tests, snaps, self.tolerance) { process::exit(0) } else { process::exit(1) }
         } else {
             if matches!(self.format, Some(Format::Table)) {
                 let table = build_gas_snapshot_table(&tests);
@@ -193,9 +192,9 @@ impl GasSnapshotConfig {
             .collect::<Vec<_>>();
 
         if self.asc {
-            tests.sort_by_key(|a| a.gas_used());
+            tests.sort_by_key(SuiteTestResult::gas_used);
         } else if self.desc {
-            tests.sort_by_key(|b| std::cmp::Reverse(b.gas_used()))
+            tests.sort_by_key(|b| Reverse(b.gas_used()));
         }
 
         tests
@@ -221,9 +220,11 @@ impl GasSnapshotDiff {
     }
 
     /// Determines the percentage change
-    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-    // i128/u64 → f64 is intentionally lossy (acceptable for percentage display);
-    // float division is guarded by the caller against zero denominators.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::as_conversions,
+        reason = "gas counts only feed a percentage rendered to three decimal places; i128/u64 → f64 has no From impl"
+    )]
     fn gas_diff(&self) -> f64 {
         self.gas_change() as f64 / self.target_gas_used.gas() as f64
     }
@@ -343,7 +344,7 @@ fn diff(
     let mut diffs = Vec::with_capacity(tests.len());
     let mut new_tests = Vec::new();
 
-    for test in tests.into_iter() {
+    for test in tests {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
@@ -358,11 +359,11 @@ fn diff(
         }
     }
 
-    let mut increased: usize = 0;
-    let mut decreased: usize = 0;
-    let mut unchanged: usize = 0;
-    let mut overall_gas_change = 0i128;
-    let mut overall_gas_used = 0i128;
+    let increased = diffs.iter().filter(|d| d.gas_change() > 0).count();
+    let decreased = diffs.iter().filter(|d| d.gas_change() < 0).count();
+    let unchanged = diffs.iter().filter(|d| d.gas_change() == 0).count();
+    let overall_gas_change: i128 = diffs.iter().map(GasSnapshotDiff::gas_change).sum();
+    let overall_gas_used: i128 = diffs.iter().map(|d| i128::from(d.target_gas_used.gas())).sum();
 
     // Sort based on user preference
     match sort_order {
@@ -380,32 +381,19 @@ fn diff(
         }
         DiffSortOrder::AbsoluteDesc => {
             // Sort by absolute gas change (largest to smallest)
-            diffs.sort_by_key(|d| std::cmp::Reverse(d.gas_change().abs()));
+            diffs.sort_by_key(|d| Reverse(d.gas_change().abs()));
         }
     }
 
     for diff in &diffs {
         let gas_change = diff.gas_change();
-        overall_gas_change = overall_gas_change.saturating_add(gas_change);
-        overall_gas_used = overall_gas_used.saturating_add(i128::from(diff.target_gas_used.gas()));
         let gas_diff = diff.gas_diff();
 
-        // Classify changes
-        if gas_change > 0 {
-            increased = increased.saturating_add(1);
-        } else if gas_change < 0 {
-            decreased = decreased.saturating_add(1);
-        } else {
-            unchanged = unchanged.saturating_add(1);
-        }
-
         // Display with icon and before/after values
-        let icon = if gas_change > 0 {
-            "↑".red().to_string()
-        } else if gas_change < 0 {
-            "↓".green().to_string()
-        } else {
-            "━".to_string()
+        let icon = match gas_change.cmp(&0) {
+            Ordering::Greater => "↑".red().to_string(),
+            Ordering::Less => "↓".green().to_string(),
+            Ordering::Equal => "━".to_string(),
         };
 
         sh_println!(
@@ -433,7 +421,13 @@ fn diff(
     #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
     // i128 → f64 is intentionally lossy; acceptable for percentage display.
     let overall_gas_diff = if overall_gas_used > 0 {
-        overall_gas_change as f64 / overall_gas_used as f64
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "gas counts only feed a percentage rendered to three decimal places"
+        )]
+        {
+            overall_gas_change as f64 / overall_gas_used as f64
+        }
     } else {
         0.0
     };
@@ -482,10 +476,11 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
-        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-        // u64 → f64 is intentionally lossy (acceptable for tolerance comparison);
-        // hi is always > 0 here since it equals max(source_gas, target_gas) and we only
-        // reach this branch when tolerance is Some, implying gas values are being compared.
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "gas counts only feed a percentage compared against a whole-number tolerance; u64 → f64 has no From impl"
+        )]
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < f64::from(tolerance)
     } else {

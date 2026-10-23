@@ -180,6 +180,7 @@ impl<'a> AdjustmentEntry<'a> {
     /// Attaches macro attribution to this edit. `name` identifies the macro rule;
     /// `original_loc` optionally points back to the location in the original source that
     /// triggered the generation, for more precise error reporting.
+    #[must_use]
     pub fn with(self, name: &'a str, original_loc: Option<MacroOriginalLocation>) -> Self {
         Self { name: Some(name), original_loc, ..self }
     }
@@ -196,8 +197,14 @@ impl<'a> AdjustmentEntry<'a> {
     /// in the original, unmodified source, and records the edit so that subsequent macro rules
     /// remain correct.
     ///
+    /// # Errors
+    ///
     /// Returns an error if any byte-offset or line-count arithmetic overflows during adjustment
     /// computation, which would indicate a corrupt or astronomically large source file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn insert(self, original_offset: OriginalOffset) -> eyre::Result<EditInfo> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         let src = sources.get_mut(path).unwrap();
@@ -206,7 +213,7 @@ impl<'a> AdjustmentEntry<'a> {
             offset_adjustments.record(path, original_offset, content.as_str(), text, "")?;
         content.insert_str(adjusted.get(), text);
         if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(ToString::to_string);
             adj.original_location = original_loc;
         }
         Ok(info)
@@ -220,6 +227,14 @@ impl<'a> AdjustmentEntry<'a> {
     /// replacement is applied. Does nothing and returns `Ok(None)` if `original_range` is empty or
     /// inverted. Returns an error if byte-offset arithmetic overflows during adjustment
     /// computation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if byte-offset arithmetic overflows during adjustment computation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not present in the sources map.
     pub fn replace(self, original_range: Range<OriginalOffset>) -> eyre::Result<Option<EditInfo>> {
         let AdjustmentEntry { path, text, name, original_loc, sources, offset_adjustments } = self;
         if original_range.end <= original_range.start {
@@ -239,7 +254,7 @@ impl<'a> AdjustmentEntry<'a> {
         )?;
         content.replace_range(adjusted_start.get()..adjusted_end.get(), text);
         if let Some(adj) = offset_adjustments.0.get_mut(path).and_then(|v| v.last_mut()) {
-            adj.macro_name = name.map(|s| s.to_string());
+            adj.macro_name = name.map(ToString::to_string);
             adj.original_location = original_loc;
         }
         Ok(Some(info))
@@ -417,8 +432,8 @@ impl OffsetAdjustment {
                 .map(ExpandedOffset::new)
                 .ok_or_else(|| eyre::eyre!("expanded position overflow"))?;
             match f(expanded_pos, adj, &mut acc)? {
-                ControlFlow::Break(_) => return Ok(acc),
-                ControlFlow::Continue(_) => {}
+                ControlFlow::Break(()) => return Ok(acc),
+                ControlFlow::Continue(()) => {}
             }
             if expanded_pos < expanded_offset {
                 accumulated_delta = accumulated_delta
@@ -471,15 +486,17 @@ mod tests {
     fn test_record() {
         let adj = setup();
         let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
-        assert_eq!(adjs.len(), 2);
-        assert_eq!(adjs[0].original_offset.get(), 16);
-        assert_eq!(adjs[0].original_line, 2);
-        assert_eq!(adjs[0].delta_offset, 28);
-        assert_eq!(adjs[0].delta_line, 3);
-        assert_eq!(adjs[1].original_offset.get(), 16);
-        assert_eq!(adjs[1].original_line, 2);
-        assert_eq!(adjs[1].delta_offset, 33);
-        assert_eq!(adjs[1].delta_line, 3);
+        let [first, second] = adjs.as_slice() else {
+            panic!("expected 2 adjustments, got {}", adjs.len());
+        };
+        assert_eq!(first.original_offset.get(), 16);
+        assert_eq!(first.original_line, 2);
+        assert_eq!(first.delta_offset, 28);
+        assert_eq!(first.delta_line, 3);
+        assert_eq!(second.original_offset.get(), 16);
+        assert_eq!(second.original_line, 2);
+        assert_eq!(second.delta_offset, 33);
+        assert_eq!(second.delta_line, 3);
     }
 
     #[test]
@@ -525,11 +542,13 @@ mod tests {
         assert_eq!(offset.get(), 15);
 
         let adjs = adj.0.get(Path::new("foo.sol")).expect("expected foo.sol");
-        assert_eq!(adjs.len(), 1);
-        assert_eq!(adjs[0].original_offset.get(), 15);
-        assert_eq!(adjs[0].original_line, 2);
-        assert_eq!(adjs[0].delta_offset, -18); // 8 - 26
-        assert_eq!(adjs[0].delta_line, -1); // 1 - 2 newlines
+        let [only] = adjs.as_slice() else {
+            panic!("expected 1 adjustment, got {}", adjs.len());
+        };
+        assert_eq!(only.original_offset.get(), 15);
+        assert_eq!(only.original_line, 2);
+        assert_eq!(only.delta_offset, -18); // 8 - 26
+        assert_eq!(only.delta_line, -1); // 1 - 2 newlines
 
         // The closing "}" is at original offset 41; after the replacement it should be at 41 - 18 =
         // 23.

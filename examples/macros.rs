@@ -1,9 +1,16 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
-use std::collections::HashMap;
+//! Every rule below has to match the `reforge::Macro` fn-pointer signature, which
+//! takes `&Gcx` — so `Gcx` being cheap to copy is not something a rule can act on.
+#![expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "rule signatures are fixed by the `Macro` fn pointer"
+)]
 
-use foundry_compilers::error::SolcError;
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+
+use foundry_compilers::error::{Result as SolcResult, SolcError};
 use reforge::{MacroRules, OriginalOffset, PreprocessingData, get_comment};
 use solar::sema::{Gcx, hir::ContractKind};
 
@@ -17,15 +24,15 @@ fn main() -> eyre::Result<()> {
     macros.run()
 }
 
-fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
+fn do_nothing(_: &Gcx, _: &mut PreprocessingData<'_>) -> SolcResult<()> {
     Ok(())
 }
 
 /// A macro that adds a function for each struct definition that prints the struct name.
 /// The function is injected into the pre-existing `{name}Library` library.
-fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers::error::Result<()> {
+fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
+    let mut insertions: HashMap<PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
 
     for struct_def in ctx.hir.structs() {
         let Some(source) = ctx.sources.get(struct_def.source) else {
@@ -74,13 +81,11 @@ fn print_name(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> foundry_compilers:
 
 /// A macro that adds a function to every struct that returns its ID if it has the field and reverts
 /// otherwise.
-fn get_id_or_revert(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn get_id_or_revert(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+
     // Collect (offset, injected_text) per file path.
-    let mut insertions: HashMap<std::path::PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let mut insertions: HashMap<PathBuf, Vec<(OriginalOffset, String)>> = HashMap::new();
     let re = RE.get_or_init(|| {
         regex::Regex::new(r"#\[derive\(get_id_or_revert\(contract=(\w+)\)\)]").unwrap()
     });
@@ -155,10 +160,7 @@ fn get_id_or_revert(
 
 /// A macro that changes all libraries into contracts if their doc comment contains
 /// #[derive(promote)].
-fn make_libraries_contracts(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn make_libraries_contracts(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     for lib in ctx.hir.contracts().filter(|c| c.kind == ContractKind::Library) {
         let Some(source) = ctx.sources.get(lib.source) else {
             continue;
@@ -186,10 +188,7 @@ fn make_libraries_contracts(
 
 /// A macro that changes the visibility of functions to public if their doc comment contains
 /// #[derive(public)].
-fn make_func_public(
-    ctx: &Gcx,
-    data: &mut PreprocessingData<'_>,
-) -> foundry_compilers::error::Result<()> {
+fn make_func_public(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
     for func in ctx.hir.functions() {
         let Some(source) = ctx.sources.get(func.source) else {
             continue;

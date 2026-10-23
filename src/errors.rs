@@ -1,14 +1,16 @@
 // Copyright (C) 2026, Ava Labs, Inc.
 // See the file LICENSE for licensing terms.
 
-use std::path::Path;
+#[cfg(test)]
+use std::sync::Mutex;
+use std::{fs, path::Path};
 
 use foundry_compilers::artifacts::Error as SolcError;
 
 use crate::{MacroOriginalLocation, MacroRules, span_utils::ExpandedOffset};
 
 #[cfg(test)]
-pub static TEST_COMPILER_OUTPUT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static TEST_COMPILER_OUTPUT: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Describes where a Solc error's primary span originates after walking the offset adjustments.
 pub enum ErrorSource {
@@ -113,7 +115,7 @@ fn render_remapped_frame(
     project_root: &Path,
 ) -> String {
     let abs = if source.is_absolute() { source.to_path_buf() } else { project_root.join(source) };
-    let Ok(content) = std::fs::read_to_string(&abs) else {
+    let Ok(content) = fs::read_to_string(&abs) else {
         return message.to_string();
     };
     let Some((line, col)) = offset_to_line_col(&content, original_offset) else {
@@ -152,8 +154,8 @@ fn format_macro_fmt_msg(
 ) -> String {
     let abs_file =
         if orig.file.is_absolute() { orig.file.clone() } else { project_root.join(&orig.file) };
-    let source_line = std::fs::read_to_string(&abs_file).ok().and_then(|content| {
-        orig.line.checked_sub(1).and_then(|idx| content.lines().nth(idx)).map(|l| l.to_string())
+    let source_line = fs::read_to_string(&abs_file).ok().and_then(|content| {
+        orig.line.checked_sub(1).and_then(|idx| content.lines().nth(idx)).map(ToString::to_string)
     });
     let arrow = format!(" --> {}:{}:{}:", orig.file.display(), orig.line, orig.col);
     let width = orig.line.to_string().len();
@@ -173,10 +175,16 @@ fn format_macro_fmt_msg(
 // 26), so concurrent test threads will flake unless serialised at the process level.
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
+    use foundry_compilers::error::Result as SolcResult;
     use solar::sema::{Gcx, hir::ContractKind};
 
     use super::offset_to_line_col;
-    use crate::{Macro, MacroOriginalLocation, PreprocessingData, span_utils::OriginalOffset};
+    use crate::{
+        Macro, MacroOriginalLocation, PreprocessingData, project_compiler::ProjectCompiler,
+        span_utils::OriginalOffset,
+    };
 
     /// Strips ANSI escape sequences from `s` so assertions can match plain text.
     fn strip_ansi(s: &str) -> String {
@@ -244,7 +252,7 @@ mod tests {
     }
 
     /// Returns the path of the source file that declares `library Foo`, if present.
-    fn foo_source_path(data: &PreprocessingData<'_>) -> Option<std::path::PathBuf> {
+    fn foo_source_path(data: &PreprocessingData<'_>) -> Option<PathBuf> {
         data.input
             .iter()
             .find(|(_, s)| s.content.as_str().contains("library Foo"))
@@ -255,10 +263,7 @@ mod tests {
     /// returns a string literal (a `uint256` type error). Because the replacement spans more
     /// lines than it removes, the error lands *inside* the macro-generated span and must be
     /// attributed to the macro rather than remapped to original source.
-    fn replace_body(
-        _ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn replace_body(_ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         const BODY: &str = "{ return 1; }";
         let Some(path) = foo_source_path(data) else { return Ok(()) };
         let (range, loc) = {
@@ -283,10 +288,7 @@ mod tests {
     /// Removes the `// #[remove_me]` comment and the whole `toRemove()` function, deleting four
     /// lines and shifting everything below it up. Used to exercise line-number remapping of a
     /// compiler error that lives in surviving original source below a removal.
-    fn remove_block(
-        _ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn remove_block(_ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         let Some(path) = foo_source_path(data) else { return Ok(()) };
         let range = {
             let content = data.input.get(&path).unwrap().content.as_str();
@@ -302,24 +304,15 @@ mod tests {
         Ok(())
     }
 
-    fn insert_foo(
-        ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn insert_foo(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         insert_in_foo(ctx, data, "insert_foo", "42")
     }
 
-    fn insert_foo_fail(
-        ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn insert_foo_fail(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         insert_in_foo(ctx, data, "insert_foo_fail", r#""not a number""#)
     }
 
-    fn insert_arrow_literal(
-        ctx: &Gcx,
-        data: &mut PreprocessingData<'_>,
-    ) -> foundry_compilers::error::Result<()> {
+    fn insert_arrow_literal(ctx: &Gcx, data: &mut PreprocessingData<'_>) -> SolcResult<()> {
         insert_in_foo(ctx, data, "insert_arrow_literal", r#""a --> b""#)
     }
 
@@ -328,7 +321,7 @@ mod tests {
         data: &mut PreprocessingData<'_>,
         macro_name: &str,
         return_expr: &'static str,
-    ) -> foundry_compilers::error::Result<()> {
+    ) -> SolcResult<()> {
         for contract in ctx.hir.contracts() {
             if contract.kind != ContractKind::Library || contract.name.name.as_str() != "Foo" {
                 continue;
@@ -379,9 +372,9 @@ mod tests {
     fn compile_source_with(source: &str, rule: Macro) -> eyre::Result<()> {
         let dir = tempfile::tempdir()?;
         let src_dir = dir.path().join("src");
-        std::fs::create_dir(&src_dir)?;
+        fs::create_dir(&src_dir)?;
         let sol_path = src_dir.join("Foo.sol");
-        std::fs::write(&sol_path, source)?;
+        fs::write(&sol_path, source)?;
 
         let config = foundry_config::Config::with_root(dir.path());
         let project = config.project()?;
@@ -389,7 +382,7 @@ mod tests {
         let mut macros = crate::MacroRules::default();
         macros.rules.push(rule);
 
-        crate::project_compiler::ProjectCompiler {
+        ProjectCompiler {
             project_root: project.root().to_path_buf(),
             print_names: false,
             print_sizes: false,

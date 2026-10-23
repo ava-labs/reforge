@@ -7,7 +7,7 @@
 // Copyright (c) 2021 Georgios Konstantopoulos
 // Licensed under the MIT License.
 
-use std::{collections::BTreeMap, path::PathBuf, time::Instant};
+use std::{collections::BTreeMap, mem, path::PathBuf, process, time::Instant};
 
 use foundry_common::{
     TestFunctionExt,
@@ -20,12 +20,14 @@ use foundry_compilers::{
     multi::{MultiCompiler, MultiCompilerError},
 };
 
-use crate::MacroRules;
+#[cfg(test)]
+use crate::errors::TEST_COMPILER_OUTPUT;
+use crate::{MacroRules, errors::correct_fmt_msg};
 
-/// https://eips.ethereum.org/EIPS/eip-170
+/// <https://eips.ethereum.org/EIPS/eip-170>
 const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
 
-/// https://eips.ethereum.org/EIPS/eip-3860
+/// <https://eips.ethereum.org/EIPS/eip-3860>
 const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Keeps track of the project being compiled. It is responsible
@@ -54,19 +56,19 @@ impl ProjectCompiler {
     ) -> eyre::Result<ProjectCompileOutput<MultiCompiler>> {
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            std::process::exit(0);
+            process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
-        let files = std::mem::take(&mut self.files);
+        let files = mem::take(&mut self.files);
         // Clone these before `self` is moved into `compile_with`.
         let macros = preprocessor.clone();
         let project_root = self.project_root.clone();
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
@@ -77,9 +79,9 @@ impl ProjectCompiler {
                 compiler.compile().map_err(eyre::Error::from)?;
 
             // Remap solc error line numbers from expanded source back to original source.
-            for error in output.output_mut().errors.iter_mut() {
+            for error in &mut output.output_mut().errors {
                 if let MultiCompilerError::Solc(e) = error {
-                    crate::errors::correct_fmt_msg(&macros, e, &project_root)?;
+                    correct_fmt_msg(&macros, e, &project_root)?;
                 }
             }
 
@@ -109,7 +111,7 @@ impl ProjectCompiler {
 
         if bail && output.has_compiler_errors() {
             #[cfg(test)]
-            crate::errors::TEST_COMPILER_OUTPUT.lock().unwrap().push(format!("{output}"));
+            TEST_COMPILER_OUTPUT.lock().unwrap().push(format!("{output}"));
             eyre::bail!("{output}")
         }
 
@@ -180,16 +182,12 @@ impl ProjectCompiler {
                         contract_size(*artifact, Bytecode::Runtime).unwrap_or_default();
                     let init_size = contract_size(*artifact, Bytecode::Init).unwrap_or_default();
 
-                    let is_dev_contract = artifact
-                        .abi
-                        .as_ref()
-                        .map(|abi| {
-                            abi.functions().any(|f| {
-                                f.test_function_kind().is_known()
-                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
-                            })
+                    let is_dev_contract = artifact.abi.as_ref().is_some_and(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
-                        .unwrap_or(false);
+                    });
 
                     let unique_name = if artifact_list.len() > 1 {
                         format!(
