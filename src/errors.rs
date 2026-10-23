@@ -382,16 +382,10 @@ mod tests {
         let mut macros = crate::MacroRules::default();
         macros.rules.push(rule);
 
-        ProjectCompiler {
-            project_root: project.root().to_path_buf(),
-            print_names: false,
-            print_sizes: false,
-            bail: true,
-            ignore_eip_3860: false,
-            files: vec![sol_path],
-        }
-        .compile(&project, macros)
-        .map(|_| ())
+        ProjectCompiler::new(project.root().to_path_buf())
+            .files([sol_path])
+            .compile(&project, macros)
+            .map(|_| ())
     }
 
     #[test]
