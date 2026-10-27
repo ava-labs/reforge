@@ -21,6 +21,9 @@ ignore = [
 
     # tracing-subscriber 0.2.x: CVSS 2.3 low; fix requires semver-breaking 0.3.x upgrade.
     "RUSTSEC-2025-0055",
+
+    # crypto-bigint 0.5.x: fix requires 0.7 / k256 0.14; alloy-signer still pins k256 ^0.13.
+    "RUSTSEC-2026-0387",
 ]
 
 [output]

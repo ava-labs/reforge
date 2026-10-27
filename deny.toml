@@ -30,6 +30,14 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
     { id = "RUSTSEC-2026-0368", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
     { id = "RUSTSEC-2026-0369", reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
+
+    # crypto-bigint 0.5.x: timing side channels in arithmetic meant to be
+    # constant-time. The fix (>= 0.7.6) is a semver-major jump that needs
+    # elliptic-curve 0.14 / k256 0.14, but every alloy-signer release so far
+    # (including 2.x) still requires k256 ^0.13, and foundry pins alloy.
+    # reforge is a local developer CLI: the only signing it does is through
+    # foundry cheatcodes/scripts with keys the developer supplies.
+    { id = "RUSTSEC-2026-0387", reason = "fix requires crypto-bigint 0.7 / k256 0.14; every alloy-signer release still pins k256 ^0.13 and foundry pins alloy; local developer CLI signing only with developer-supplied keys" },
 ]
 
 [licenses]

@@ -56,3 +56,33 @@ reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts chec
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0369"
 reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0387"
+reason = "crypto-bigint 0.5.x: fix requires 0.7 / k256 0.14; every alloy-signer release still pins k256 ^0.13 and foundry pins alloy; local developer CLI signing only with developer-supplied keys"
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "block-buffer 0.10: cursor corruption only if a panic inside a digest callback is caught and the buffer reused; fix (0.12.1) requires the digest 0.11 line, which the alloy/k256 0.13 stack pinned by foundry does not use; reforge never catches panics around hashing"
+
+# zstd and zstd-safe are in Cargo.lock only through optional features that
+# nothing enables: foundry-primitives -> tempo-primitives (git) -> reth-codecs
+# (optional `reth-codec` feature, off) -> reth-zstd-compressors (optional
+# `alloy` feature, off) -> zstd -> zstd-safe. None of reth-codecs, zstd or
+# zstd-safe is in the compiled graph: `cargo tree -i zstd --target all -e all`
+# prints nothing, and cargo-deny never sees them. reth pins zstd 0.13, so the
+# fixed zstd 0.14 / zstd-safe 8.x line is unreachable without modifying reth.
+# Pinned to exact versions so any bump is re-audited.
+[[PackageOverrides]]
+name = "zstd"
+version = "0.13.3"
+ecosystem = "crates.io"
+ignore = true
+reason = "not in the compiled graph: behind unused optional features of tempo-primitives/reth-codecs (foundry git deps); reth pins zstd 0.13 so the fixed 0.14 line is unreachable"
+
+[[PackageOverrides]]
+name = "zstd-safe"
+version = "7.2.4"
+ecosystem = "crates.io"
+ignore = true
+reason = "not in the compiled graph: pulled only by zstd 0.13.3 (see above); fixed 8.x line requires zstd 0.14, which reth does not allow"
