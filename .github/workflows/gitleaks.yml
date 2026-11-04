@@ -12,12 +12,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   gitleaks:
+    permissions:
+      contents: read
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
