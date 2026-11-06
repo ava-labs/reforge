@@ -58,12 +58,24 @@ id = "RUSTSEC-2026-0369"
 reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0387"
-reason = "crypto-bigint 0.5.x: fix requires 0.7 / k256 0.14; every alloy-signer release still pins k256 ^0.13 and foundry pins alloy; local developer CLI signing only with developer-supplied keys"
+id = "GHSA-8hxf-qr8p-62x4"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
 
 [[IgnoredVulns]]
-id = "GHSA-qwgh-2vcv-g2f7"
-reason = "block-buffer 0.10: cursor corruption only if a panic inside a digest callback is caught and the buffer reused; fix (0.12.1) requires the digest 0.11 line, which the alloy/k256 0.13 stack pinned by foundry does not use; reforge never catches panics around hashing"
+id = "GHSA-m665-v7pm-7grj"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
+
+[[IgnoredVulns]]
+id = "GHSA-q7v9-x93c-xqv3"
+reason = "zip 9.x not yet available via soldeer-core; soldeer only extracts checksum-verified registry archives, not attacker-controlled input"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0441"
+reason = "pin-utils: unmaintained (upstream archived Oct 2026); locked by foundry submodule deps (coins-ledger, wasmtimer); no security vulnerability, maintenance-only advisory; no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0387"
+reason = "crypto-bigint 0.5.x: fix requires 0.7 / k256 0.14; every alloy-signer release still pins k256 ^0.13 and foundry pins alloy; local developer CLI signing only with developer-supplied keys"
 
 # zstd and zstd-safe are in Cargo.lock only through optional features that
 # nothing enables: foundry-primitives -> tempo-primitives (git) -> reth-codecs

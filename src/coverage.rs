@@ -200,14 +200,7 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let compiler = ProjectCompiler {
-            project_root: project.root().to_path_buf(),
-            print_names: false,
-            print_sizes: false,
-            bail: true,
-            ignore_eip_3860: false,
-            files: vec![],
-        };
+        let compiler = ProjectCompiler::new(project.root().to_path_buf());
 
         let output =
             compiler.compile(&project, macros)?.with_stripped_file_prefixes(project.root());

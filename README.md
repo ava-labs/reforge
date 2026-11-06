@@ -191,15 +191,14 @@ Tests are structured around three directories:
 | `expected/` | Pre-expanded `.sol` files to compare against |
 | `mismatches/` | Written on failure: the actual expanded output, ready to copy to `expected/` if correct |
 
-### `test_macros` — assert correct output
+### `MacroTest` — assert correct output
 
 ```rust
-reforge::testing::test_macros(
-    "tests/source",
-    "tests/expected",
-    "tests/mismatches",
-    &[rule1, rule2, ...],
-)?;
+reforge::testing::MacroTest::new()
+    .source("tests/source")
+    .expected("tests/expected")
+    .mismatches("tests/mismatches")
+    .run(&[rule1, rule2, ...])?;
 ```
 
 Runs the rules in order and compares the expanded sources against `expected/` file-by-file (matched by relative path). On any mismatch the actual content is written to `mismatches/` and the call returns an error listing the differing files. To accept new output, copy `mismatches/` over `expected/`.
@@ -216,7 +215,7 @@ Expects the rule to return an error. Returns the error as an `eyre::Report` so y
 ### `expand_macros` — low-level expansion
 
 ```rust
-let sources = reforge::testing::expand_macros("tests/source", &[my_rule])?;
+let sources = reforge::testing::expand_macros("tests/source", None, &[my_rule])?;
 ```
 
 Runs the rules and returns the expanded `Sources` map directly, for cases where you need custom assertions beyond file equality.
