@@ -34,21 +34,64 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 /// for pre-processing, organizing files, printing out diagnostics/info,
 /// and passing sources to the compiler. It is nearly identical to the
 /// `ProjectCompiler` found in `foundry-common::compile`.
+#[must_use = "ProjectCompiler does nothing unless you call `compile`"]
 pub(crate) struct ProjectCompiler {
-    pub project_root: PathBuf,
+    project_root: PathBuf,
     /// Whether to also print contract names.
-    pub print_names: bool,
+    print_names: bool,
     /// Whether to also print contract sizes.
-    pub print_sizes: bool,
+    print_sizes: bool,
     /// Whether to bail on compiler errors.
-    pub bail: bool,
+    bail: bool,
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
-    pub ignore_eip_3860: bool,
+    ignore_eip_3860: bool,
     /// Extra files to include, that are not necessarily in the project's source directory.
-    pub files: Vec<PathBuf>,
+    files: Vec<PathBuf>,
 }
 
 impl ProjectCompiler {
+    /// Create a new builder with the default settings.
+    pub(crate) fn new(project_root: PathBuf) -> Self {
+        Self {
+            project_root,
+            print_names: false,
+            print_sizes: false,
+            bail: true,
+            ignore_eip_3860: false,
+            files: Vec::new(),
+        }
+    }
+
+    /// Sets whether to print contract names.
+    pub(crate) fn print_names(mut self, yes: bool) -> Self {
+        self.print_names = yes;
+        self
+    }
+
+    /// Sets whether to print contract sizes.
+    pub(crate) fn print_sizes(mut self, yes: bool) -> Self {
+        self.print_sizes = yes;
+        self
+    }
+
+    /// Sets whether to bail on compiler errors.
+    pub(crate) fn bail(mut self, yes: bool) -> Self {
+        self.bail = yes;
+        self
+    }
+
+    /// Sets whether to ignore EIP-3860 initcode size limits.
+    pub(crate) fn ignore_eip_3860(mut self, yes: bool) -> Self {
+        self.ignore_eip_3860 = yes;
+        self
+    }
+
+    /// Sets extra files to include beyond the project's source directory.
+    pub(crate) fn files(mut self, files: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.files.extend(files);
+        self
+    }
+
     pub fn compile(
         mut self,
         project: &Project<MultiCompiler>,
