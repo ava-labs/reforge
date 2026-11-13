@@ -12,8 +12,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +20,8 @@ env:
 
 jobs:
   test:
+    permissions:
+      contents: read
     name: Example (macros)
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +67,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
   clippy:
+    permissions:
+      contents: read
     name: Clippy
     runs-on: ubuntu-latest
     steps:
@@ -106,6 +109,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
   fmt:
+    permissions:
+      contents: read
     name: Formatting
     runs-on: ubuntu-latest
     steps:
