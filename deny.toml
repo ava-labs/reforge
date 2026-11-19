@@ -46,6 +46,23 @@ ignore = [
     # reforge is a local developer CLI: the only signing it does is through
     # foundry cheatcodes/scripts with keys the developer supplies.
     { id = "RUSTSEC-2026-0387", reason = "fix requires crypto-bigint 0.7 / k256 0.14; every alloy-signer release still pins k256 ^0.13 and foundry pins alloy; local developer CLI signing only with developer-supplied keys" },
+
+    # chrono: unmaintained (RUSTSEC-2026-0543). No fix available — advisory
+    # recommends migrating to jiff or time, but chrono is pulled transitively
+    # by many foundry components which we do not modify.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained; transitively required by foundry submodule components; no fix available upstream" },
+
+    # zip AES auth bypass (RUSTSEC-2026-0545): affects zip 4.6.1, fix requires
+    # zip >= 9.0.0. zip 4.6.1 is locked by soldeer-core 0.10.0 in the foundry
+    # submodule which we do not modify.
+    # zip ZipStreamReader path traversal (RUSTSEC-2026-0548): affects zip 4.6.1
+    # and zip 9.0.0, fix requires zip >= 9.0.5. soldeer-core 0.12.1 (latest)
+    # pins zip 9.0.0; no compatible upgrade path exists.
+    # Both vectors require extraction of an attacker-controlled archive; soldeer
+    # only extracts archives from its own registry after checksum verification,
+    # so the attack surface doesn't exist in practice.
+    { id = "RUSTSEC-2026-0545", reason = "zip 4.6.1 locked by soldeer-core 0.10.0 in foundry submodule; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
+    { id = "RUSTSEC-2026-0548", reason = "zip >= 9.0.5 unreachable: soldeer-core 0.12.1 (latest) pins zip 9.0.0; soldeer only extracts checksum-verified registry archives, not attacker-controlled input" },
 ]
 
 [licenses]
